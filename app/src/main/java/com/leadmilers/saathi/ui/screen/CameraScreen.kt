@@ -68,7 +68,7 @@ private fun CameraPreviewContent(context: Context) {
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
     val repository = remember { (context.applicationContext as SaathiApp).repository }
-    val classifier = remember { AcneClassifier(context) }
+    val classifier = remember { AcneClassifier() }
 
     var imageCapture: ImageCapture? by remember { mutableStateOf(null) }
     var analysisResult: AcneAnalysisResult? by remember { mutableStateOf(null) }
