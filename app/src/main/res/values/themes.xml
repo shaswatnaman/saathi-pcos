@@ -1,5 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-
+    <!-- Base theme (no action bar) -->
     <style name="Theme.Saathi" parent="android:Theme.Material.Light.NoActionBar" />
+
+    <!-- Splash screen theme — uses androidx core-splashscreen -->
+    <style name="Theme.Saathi.Splash" parent="Theme.SplashScreen">
+        <!-- Splash icon is the logo; windowSplashScreenBackground is warm white -->
+        <item name="windowSplashScreenBackground">#FCFAF9</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/saathi_logo</item>
+        <item name="windowSplashScreenAnimationDuration">600</item>
+        <!-- After splash, use our base theme -->
+        <item name="postSplashScreenTheme">@style/Theme.Saathi</item>
+    </style>
 </resources>

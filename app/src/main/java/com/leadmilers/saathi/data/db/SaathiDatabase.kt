@@ -4,22 +4,26 @@ import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
-import com.leadmilers.saathi.data.dao.CycleLogDao
-import com.leadmilers.saathi.data.dao.RiskAssessmentDao
-import com.leadmilers.saathi.data.dao.SymptomLogDao
-import com.leadmilers.saathi.data.entity.CycleLog
-import com.leadmilers.saathi.data.entity.RiskAssessment
-import com.leadmilers.saathi.data.entity.SymptomLog
+import com.leadmilers.saathi.data.dao.*
+import com.leadmilers.saathi.data.entity.*
 
 @Database(
-    entities = [CycleLog::class, SymptomLog::class, RiskAssessment::class],
-    version = 2,
+    entities = [
+        CycleLog::class,
+        SymptomLog::class,
+        RiskAssessment::class,
+        HealthEntry::class,
+        HealthModule::class
+    ],
+    version = 3,
     exportSchema = false
 )
 abstract class SaathiDatabase : RoomDatabase() {
     abstract fun cycleLogDao(): CycleLogDao
     abstract fun symptomLogDao(): SymptomLogDao
     abstract fun riskAssessmentDao(): RiskAssessmentDao
+    abstract fun healthEntryDao(): HealthEntryDao
+    abstract fun healthModuleDao(): HealthModuleDao
 
     companion object {
         @Volatile private var INSTANCE: SaathiDatabase? = null

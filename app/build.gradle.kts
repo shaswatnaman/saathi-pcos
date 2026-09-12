@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
@@ -17,6 +19,12 @@ android {
         versionCode = 1
         versionName = "1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        val localProps = Properties()
+        localProps.load(rootProject.file("local.properties").inputStream())
+        buildConfigField("String", "OPENROUTER_API_KEY",
+            "\"${localProps["openrouter.api.key"] ?: ""}\"")
+
     }
 
     buildTypes {
@@ -32,6 +40,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     packaging {
         resources {
@@ -82,8 +91,26 @@ dependencies {
     // Accompanist permissions
     implementation("com.google.accompanist:accompanist-permissions:0.34.0")
 
+    // HTTP client for cloud face analysis
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
     // Icons extended
     implementation("androidx.compose.material:material-icons-extended")
+
+    // Google Fonts (Inter)
+    implementation("androidx.compose.ui:ui-text-google-fonts")
+
+    // Health Connect — step count, sleep (reads from Origin Health / Google Fit / wearable)
+    implementation("androidx.health.connect:connect-client:1.1.0-rc01")
+
+    // Splash screen API (backport to API 26+)
+    implementation("androidx.core:core-splashscreen:1.0.1")
+
+    // Nearby Connections — local device-to-device encrypted sync (no cloud)
+    implementation("com.google.android.gms:play-services-nearby:19.3.0")
+
+    // ZXing core — QR code generation (no UI, just bitmap encoding)
+    implementation("com.google.zxing:core:3.5.3")
 
     // Test
     testImplementation(libs.junit)

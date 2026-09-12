@@ -33,19 +33,75 @@ fun OfficeScreen() {
     var pdfPath by remember { mutableStateOf<String?>(null) }
     var isGenerating by remember { mutableStateOf(false) }
 
-    // Build a human-readable risk summary for clipboard
+    // Clinical summary for doctor clipboard
     suspend fun buildSummary(): String {
         val repo = (context.applicationContext as SaathiApp).repository
         val risk: RiskAssessment? = repo.latestRiskAssessment.first()
-        return if (risk != null) {
-            "Saathi PCOS Risk Report\n" +
-            "Risk Level: ${risk.riskLevel}\n" +
-            "Score: ${risk.totalScore}/12\n" +
-            "Cycle: ${risk.cycleScore}  Acne: ${risk.acneScore}  " +
-            "Fatigue: ${risk.fatigueScore}  Physical: ${risk.physicalScore}"
+        val symptom = repo.getLatestSymptomLog()
+
+        val f0Sd   = repo.getLatestHealthEntry("voice", "f0_sd")
+        val f0Min  = repo.getLatestHealthEntry("voice", "f0_min")
+        val f0Mean = repo.getLatestHealthEntry("voice", "f0_mean")
+        val whtr   = repo.getLatestHealthEntry("general", "whtr")
+        val waist  = repo.getLatestHealthEntry("general", "waist_cm")
+        val height = repo.getLatestHealthEntry("general", "height_cm")
+
+        val sb = StringBuilder()
+        sb.appendLine("SAATHI — CLINICAL SCREENING SUMMARY")
+        sb.appendLine("Generated: ${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date())}")
+        sb.appendLine("─────────────────────────────────────")
+
+        if (risk != null) {
+            sb.appendLine("PCOS RISK ASSESSMENT")
+            sb.appendLine("  Risk level : ${risk.riskLevel}")
+            sb.appendLine("  Total score: ${risk.totalScore}/12")
+            sb.appendLine("  Cycle irregularity       : ${risk.cycleScore} pts")
+            sb.appendLine("  Androgenic acne (CV model): ${risk.acneScore} pts")
+            sb.appendLine("  Fatigue / voice energy    : ${risk.fatigueScore} pts")
+            sb.appendLine("  Physical symptoms         : ${risk.physicalScore} pts")
         } else {
-            "Saathi PCOS Risk Report — no assessment yet. Log a cycle and symptoms first."
+            sb.appendLine("PCOS RISK ASSESSMENT: No assessment recorded yet.")
         }
+
+        sb.appendLine()
+        sb.appendLine("ACOUSTIC BIOMARKERS (on-device YIN pitch, 16kHz)")
+        if (f0Sd != null) {
+            sb.appendLine("  F0 SD  (cycle-phase primary)  : ${"%.2f".format(f0Sd.numericValue)} Hz")
+            sb.appendLine("  F0 min (5th-pct, secondary)   : ${"%.1f".format(f0Min?.numericValue ?: 0.0)} Hz")
+            sb.appendLine("  F0 mean (baseline anchor)     : ${"%.1f".format(f0Mean?.numericValue ?: 0.0)} Hz")
+            sb.appendLine("  Ref: Ziemer et al., JMIR Formative Research 2025 (PMC11737864)")
+        } else {
+            sb.appendLine("  No voice recording on file.")
+        }
+
+        sb.appendLine()
+        sb.appendLine("BODY COMPOSITION")
+        if (whtr != null) {
+            sb.appendLine("  Waist circumference: ${"%.1f".format(waist?.numericValue ?: 0.0)} cm")
+            sb.appendLine("  Height             : ${"%.1f".format(height?.numericValue ?: 0.0)} cm")
+            sb.appendLine("  WHtR               : ${"%.3f".format(whtr.numericValue)} (insulin resistance proxy)")
+            val whtrVal = whtr.numericValue ?: 0.0
+            val band = when { whtrVal < 0.43 -> "Low" ; whtrVal < 0.53 -> "Healthy" ; whtrVal < 0.58 -> "Increased" ; else -> "High" }
+            sb.appendLine("  Risk band          : $band (ref: ≤0.43 low · 0.43–0.53 healthy · 0.53–0.58 ↑ · >0.58 high)")
+        } else {
+            sb.appendLine("  No body measurements recorded.")
+        }
+
+        symptom?.let {
+            sb.appendLine()
+            sb.appendLine("SYMPTOM FLAGS (latest entry)")
+            sb.appendLine("  Fatigue (0–5)  : ${it.fatigue}")
+            sb.appendLine("  Acanthosis nigricans: ${if (it.skinDarkening) "Reported" else "Not reported"}")
+            sb.appendLine("  Unexplained weight gain: ${if (it.weightGain) "Reported" else "Not reported"}")
+            sb.appendLine("  Hair thinning/hirsutism: ${if (it.hairIssues) "Reported" else "Not reported"}")
+            if (it.weight > 0f) sb.appendLine("  Body weight: ${"%.1f".format(it.weight)} kg")
+        }
+
+        sb.appendLine()
+        sb.appendLine("─────────────────────────────────────")
+        sb.appendLine("NOT A CLINICAL DIAGNOSIS. For reference only.")
+        sb.appendLine("Source: Saathi on-device PCOS screening tracker (leadmilers)")
+        return sb.toString()
     }
 
     // Ensure the PDF is generated before mirror/transfer actions
@@ -54,9 +110,11 @@ fun OfficeScreen() {
         isGenerating = true
         return try {
             val repo = (context.applicationContext as SaathiApp).repository
-            val risks = repo.recentRiskAssessments(30).first()
+            val risks    = repo.recentRiskAssessments(30).first()
             val symptoms = repo.recentSymptomLogs(30).first()
-            ReportGenerator.generate(context, risks, symptoms).also { pdfPath = it }
+            val entries  = repo.getRecentHealthEntries("voice", 10) +
+                           repo.getRecentHealthEntries("general", 20)
+            ReportGenerator.generate(context, risks, symptoms, healthEntries = entries).also { pdfPath = it }
         } catch (e: Exception) {
             snackbarHost.showSnackbar("Could not generate report: ${e.message}")
             null

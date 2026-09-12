@@ -4,8 +4,10 @@ import android.Manifest
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
@@ -23,11 +25,11 @@ import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.isGranted
 import com.google.accompanist.permissions.rememberPermissionState
 import com.leadmilers.saathi.SaathiApp
+import com.leadmilers.saathi.data.entity.HealthEntry
 import com.leadmilers.saathi.data.entity.SymptomLog
 import com.leadmilers.saathi.ml.VoiceAnalyzer
 import com.leadmilers.saathi.ml.VoiceResult
 import kotlinx.coroutines.launch
-import kotlin.math.roundToInt
 
 @OptIn(ExperimentalPermissionsApi::class)
 @Composable
@@ -37,9 +39,16 @@ fun VoiceScreen() {
 
     if (!audioPermission.status.isGranted) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                Text("Microphone access needed for voice energy analysis")
-                Button(onClick = { audioPermission.launchPermissionRequest() }) { Text("Grant Permission") }
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+                modifier = Modifier.padding(24.dp)
+            ) {
+                Text("Microphone access needed for voice signature analysis",
+                    style = MaterialTheme.typography.bodyLarge)
+                Button(onClick = { audioPermission.launchPermissionRequest() }) {
+                    Text("Grant Permission")
+                }
             }
         }
         return
@@ -53,47 +62,76 @@ private fun VoiceRecorderContent() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val repository = remember { (context.applicationContext as SaathiApp).repository }
-    val analyzer = remember { VoiceAnalyzer(context) }
+    val analyzer = remember { VoiceAnalyzer() }
 
     var isRecording by remember { mutableStateOf(false) }
     var result by remember { mutableStateOf<VoiceResult?>(null) }
     var liveAmplitudes by remember { mutableStateOf(List(30) { 0f }) }
     var secondsLeft by remember { mutableStateOf(10) }
-    var statusMessage by remember { mutableStateOf("Tap to record 10 seconds of your voice") }
+    var statusMessage by remember { mutableStateOf("Tap to record 10 seconds of your natural speaking voice") }
 
     Column(
-        modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .verticalScroll(rememberScrollState())
             .padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.SpaceBetween
+        verticalArrangement = Arrangement.spacedBy(20.dp)
     ) {
         // Header
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text("Voice Energy", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.height(4.dp))
-            Text(
-                "Tracks vocal fatigue as a hormonal proxy",
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("Voice Signature",
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold)
+            Text("Tracks acoustic features that shift across your cycle",
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
+
+        // Science context card
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("What this measures", style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold)
+                Text(
+                    "Pitch variability (F0 SD) and lower-pitch boundary (F0 min) shift measurably " +
+                    "across menstrual cycle phases due to estrogen/progesterone effects on laryngeal " +
+                    "tissue. Useful for cross-checking your self-reported cycle phase — especially " +
+                    "helpful with irregular cycles.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text("Validated: Ziemer et al., JMIR Formative Research 2025",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary)
+            }
+        }
+
+        Spacer(Modifier.height(4.dp))
 
         // Waveform
         Waveform(amplitudes = liveAmplitudes, isRecording = isRecording)
 
-        // Timer during recording
+        // Timer
         if (isRecording) {
             Text("$secondsLeft s", fontSize = 48.sp, fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary)
         }
 
-        // Result card
+        // Result
         result?.let { r ->
-            ResultCard(r)
+            VoiceResultCard(r)
         }
 
         // Status
-        Text(statusMessage, style = MaterialTheme.typography.bodyMedium,
+        Text(statusMessage,
+            style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant)
 
         // Record button
@@ -104,19 +142,26 @@ private fun VoiceRecorderContent() {
                 result = null
                 secondsLeft = 10
                 liveAmplitudes = List(30) { 0f }
-                statusMessage = "Recording… speak naturally"
+                statusMessage = "Recording… speak naturally for 10 seconds"
 
                 scope.launch {
-                    var tick = 0
+                    var frameCount = 0
                     try {
                         val voiceResult = analyzer.record { amplitude ->
-                            tick++
-                            secondsLeft = 10 - (tick * 100 / 1000).coerceAtMost(10)
-                            liveAmplitudes = (liveAmplitudes.drop(1) + amplitude)
+                            frameCount++
+                            // ~32 ms/frame at 16kHz/512 samples → ~31 frames/s
+                            secondsLeft = (10 - frameCount / 31).coerceAtLeast(0)
+                            liveAmplitudes = liveAmplitudes.drop(1) + amplitude
                         }
                         result = voiceResult
-                        statusMessage = "Score saved to today's log."
-                        saveToSymptomLog(repository, voiceResult)
+                        statusMessage = if (voiceResult.voicedFrames >= 5) {
+                            "Done! Your voice was captured clearly."
+                        } else {
+                            "Couldn't pick up your voice well — try speaking a bit louder in a quieter spot."
+                        }
+                        if (voiceResult.voicedFrames >= 5) {
+                            saveVoiceResult(repository, voiceResult)
+                        }
                     } catch (e: Exception) {
                         statusMessage = "Recording failed: ${e.message}"
                     } finally {
@@ -139,9 +184,118 @@ private fun VoiceRecorderContent() {
             )
         }
 
-        Spacer(Modifier.height(8.dp))
+        // Disclaimer
+        Text(
+            "Experimental · for cycle-phase corroboration only · not a diagnostic measurement · " +
+            "accuracy comparable to published research requires multiple recordings over time",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+            modifier = Modifier.padding(horizontal = 8.dp)
+        )
+
+        Spacer(Modifier.height(60.dp))
     }
 }
+
+@Composable
+private fun VoiceResultCard(result: VoiceResult) {
+    val hasData = result.voicedFrames >= 5
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant)
+    ) {
+        Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+
+            Row(verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("🎙️", fontSize = 20.sp)
+                Text("Today's Voice Reading",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold)
+            }
+
+            if (!hasData) {
+                Text("We couldn't catch enough of your voice. Try speaking naturally for the full 10 seconds in a quieter spot.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error)
+                return@Column
+            }
+
+            // Primary: F0 SD — voice "expressiveness" across cycle
+            FriendlyVoiceRow(
+                emoji = "〰️",
+                title = "How much your voice varied",
+                subtitle = "This shifts across your cycle — useful for spotting where you are",
+                value = "${"%.1f".format(result.f0Sd)} Hz",
+                valueColor = MaterialTheme.colorScheme.primary
+            )
+
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
+
+            // Secondary: F0 Min — lowest pitch
+            FriendlyVoiceRow(
+                emoji = "🔉",
+                title = "Your lowest note today",
+                subtitle = "Tends to be a bit higher in the second half of your cycle",
+                value = "${"%.0f".format(result.f0Min)} Hz",
+                valueColor = Color(0xFF6A1B9A)
+            )
+
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
+
+            // F0 Mean — stable baseline
+            FriendlyVoiceRow(
+                emoji = "📍",
+                title = "Your average pitch (baseline)",
+                subtitle = "This stays mostly the same — used to compare your other readings to",
+                value = "${"%.0f".format(result.f0Mean)} Hz",
+                valueColor = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            // Save note
+            Text("✓ Saved to your voice log on this device",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f))
+
+            Text("All processing happens on your phone · nothing is sent to any server",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f))
+        }
+    }
+}
+
+@Composable
+private fun FriendlyVoiceRow(
+    emoji: String,
+    title: String,
+    subtitle: String,
+    value: String,
+    valueColor: Color
+) {
+    Row(modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.Top) {
+        Row(modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(emoji, fontSize = 16.sp)
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(title, style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurface)
+                Text(subtitle, style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
+            }
+        }
+        Spacer(Modifier.width(12.dp))
+        Text(value,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+            color = valueColor)
+    }
+}
+
 
 @Composable
 private fun Waveform(amplitudes: List<Float>, isRecording: Boolean) {
@@ -155,16 +309,12 @@ private fun Waveform(amplitudes: List<Float>, isRecording: Boolean) {
     )
 
     Row(
-        modifier = Modifier.fillMaxWidth().height(100.dp),
+        modifier = Modifier.fillMaxWidth().height(80.dp),
         horizontalArrangement = Arrangement.spacedBy(3.dp, Alignment.CenterHorizontally),
         verticalAlignment = Alignment.CenterVertically
     ) {
         amplitudes.forEachIndexed { i, amp ->
-            val height = if (isRecording) {
-                ((amp * pulse * 80f) + 6f).coerceIn(6f, 90f)
-            } else {
-                6f
-            }
+            val height = if (isRecording) ((amp * pulse * 70f) + 6f).coerceIn(6f, 70f) else 6f
             val animatedHeight by animateFloatAsState(
                 targetValue = height,
                 animationSpec = tween(80),
@@ -184,46 +334,29 @@ private fun Waveform(amplitudes: List<Float>, isRecording: Boolean) {
     }
 }
 
-@Composable
-private fun ResultCard(result: VoiceResult) {
-    val scorePercent = (result.energyScore * 100).roundToInt()
-    val color = when {
-        result.energyScore >= 0.75f -> Color(0xFF43A047)
-        result.energyScore >= 0.50f -> Color(0xFFFF9800)
-        else -> Color(0xFFE53935)
-    }
-    val label = when {
-        result.energyScore >= 0.75f -> "Good energy — normal"
-        result.energyScore >= 0.50f -> "Moderate fatigue"
-        else -> "Low energy — possible fatigue"
-    }
-
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = color.copy(alpha = 0.12f)),
-        shape = RoundedCornerShape(16.dp)
-    ) {
-        Column(
-            modifier = Modifier.padding(20.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Text("Voice Energy Score", style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text("$scorePercent%", fontSize = 48.sp, fontWeight = FontWeight.Bold, color = color)
-            Text(label, style = MaterialTheme.typography.bodyMedium, color = color)
-        }
-    }
-}
-
-private suspend fun saveToSymptomLog(
+private suspend fun saveVoiceResult(
     repository: com.leadmilers.saathi.data.repository.SaathiRepository,
     result: VoiceResult
 ) {
+    val now = System.currentTimeMillis()
+
+    // Save F0 metrics as HealthEntry rows (cycle-phase signals, not risk inputs)
+    repository.insertHealthEntries(listOf(
+        HealthEntry(moduleId = "voice", entryType = "f0_sd",
+            numericValue = result.f0Sd.toDouble(), sourceType = "microphone", timestamp = now),
+        HealthEntry(moduleId = "voice", entryType = "f0_min",
+            numericValue = result.f0Min.toDouble(), sourceType = "microphone", timestamp = now),
+        HealthEntry(moduleId = "voice", entryType = "f0_mean",
+            numericValue = result.f0Mean.toDouble(), sourceType = "microphone", timestamp = now),
+        HealthEntry(moduleId = "voice", entryType = "voice_energy_experimental",
+            numericValue = result.energyScore.toDouble(), sourceType = "microphone", timestamp = now)
+    ))
+
+    // Keep SymptomLog.voiceEnergyScore populated for backward compat with RiskScorer
     val existing = repository.getLatestSymptomLog()
     val log = existing?.copy(voiceEnergyScore = result.energyScore)
         ?: SymptomLog(
-            date = System.currentTimeMillis(),
+            date = now,
             fatigue = 3,
             acneScore = 0f,
             voiceEnergyScore = result.energyScore,

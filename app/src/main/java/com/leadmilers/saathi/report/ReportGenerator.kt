@@ -12,6 +12,7 @@ import com.github.mikephil.charting.charts.LineChart
 import com.github.mikephil.charting.components.XAxis
 import com.github.mikephil.charting.data.*
 import com.github.mikephil.charting.formatter.IndexAxisValueFormatter
+import com.leadmilers.saathi.data.entity.HealthEntry
 import com.leadmilers.saathi.data.entity.RiskAssessment
 import com.leadmilers.saathi.data.entity.SymptomLog
 import com.leadmilers.saathi.ml.RiskScorer
@@ -46,9 +47,10 @@ object ReportGenerator {
         context: Context,
         riskAssessments: List<RiskAssessment>,
         symptomLogs: List<SymptomLog>,
-        patientName: String = "Patient"
+        patientName: String = "Patient",
+        doctorMode: Boolean = true,
+        healthEntries: List<HealthEntry> = emptyList()
     ): String {
-        // Chart view must be created on the Main thread (needs Looper)
         val chartBitmap = withContext(Dispatchers.Main) {
             buildChartBitmap(context, symptomLogs, riskAssessments)
         }
@@ -59,9 +61,9 @@ object ReportGenerator {
             val doc      = PdfDocument()
             val latest   = riskAssessments.firstOrNull()
 
-            drawPage1(doc, latest, patientName, dateStr)
-            drawPage2(doc, chartBitmap)
-            drawPage3(doc, symptomLogs)
+            drawPage1(doc, latest, patientName, dateStr, doctorMode, healthEntries)
+            drawPage2(doc, chartBitmap, doctorMode)
+            drawPage3(doc, symptomLogs, healthEntries, doctorMode)
 
             val path = saveDocument(context, doc, fileName)
             doc.close()
@@ -72,7 +74,8 @@ object ReportGenerator {
     // ── Page 1: Summary ──────────────────────────────────────────────────
     private fun drawPage1(
         doc: PdfDocument, assessment: RiskAssessment?,
-        patientName: String, dateStr: String
+        patientName: String, dateStr: String, doctorMode: Boolean,
+        healthEntries: List<HealthEntry> = emptyList()
     ) {
         val page = doc.startPage(PdfDocument.PageInfo.Builder(PAGE_W, PAGE_H, 1).create())
         val c = page.canvas
@@ -95,21 +98,29 @@ object ReportGenerator {
         val levelColor = riskColor(level)
         c.drawRoundRect(RectF(MARGIN, y, PAGE_W - MARGIN, y + 130f), 12f, 12f,
             Paint().apply { color = levelColor })
-        c.drawText("PCOS RISK LEVEL", MARGIN + 20f, y + 30f,
-            textPaint(13f, color = Color.WHITE))
+        val cardTitle = if (doctorMode) "PCOS RISK LEVEL" else "YOUR CURRENT STATUS"
+        c.drawText(cardTitle, MARGIN + 20f, y + 30f, textPaint(13f, color = Color.WHITE))
         c.drawText(level.uppercase(), MARGIN + 20f, y + 75f,
             textPaint(32f, bold = true, color = Color.WHITE))
-        c.drawText("Score: $score / 12", MARGIN + 20f, y + 108f,
-            textPaint(16f, color = Color.WHITE))
+        if (doctorMode) {
+            c.drawText("Score: $score / 12", MARGIN + 20f, y + 108f,
+                textPaint(16f, color = Color.WHITE))
+        }
         y += 150f
 
-        // Risk score breakdown
-        c.drawText("Score Breakdown", MARGIN, y, textPaint(16f, bold = true))
+        // Score breakdown (doctor mode only shows clinical labels)
+        val breakdownTitle = if (doctorMode) "Score Breakdown" else "Contributing Factors"
+        c.drawText(breakdownTitle, MARGIN, y, textPaint(16f, bold = true))
         y += 24f
-        val breakdown = listOf(
+        val breakdown = if (doctorMode) listOf(
             "Cycle irregularity" to (assessment?.cycleScore ?: 0),
-            "Androgenic acne (TFLite AUC 0.94)" to (assessment?.acneScore ?: 0),
+            "Androgenic acne (CV model, AUC 0.94)" to (assessment?.acneScore ?: 0),
             "Fatigue / voice energy drop" to (assessment?.fatigueScore ?: 0),
+            "Physical symptoms" to (assessment?.physicalScore ?: 0)
+        ) else listOf(
+            "Irregular cycles" to (assessment?.cycleScore ?: 0),
+            "Skin / acne signals" to (assessment?.acneScore ?: 0),
+            "Energy levels" to (assessment?.fatigueScore ?: 0),
             "Physical symptoms" to (assessment?.physicalScore ?: 0)
         )
         for ((label, pts) in breakdown) {
@@ -120,15 +131,16 @@ object ReportGenerator {
             c.drawRoundRect(RectF(MARGIN + 160f, y - 12f, MARGIN + 160f + fill, y + 4f),
                 4f, 4f, Paint().apply { color = colorPrimary })
             c.drawText(label, MARGIN, y, textPaint(12f))
-            c.drawText("+$pts", PAGE_W - MARGIN - 30f, y, textPaint(12f, bold = true))
+            if (doctorMode) c.drawText("+$pts", PAGE_W - MARGIN - 30f, y, textPaint(12f, bold = true))
             y += 30f
         }
         y += 10f
 
-        // Clinical guidance
-        c.drawText("Clinical Guidance", MARGIN, y, textPaint(16f, bold = true))
+        // Guidance section
+        val guidanceTitle = if (doctorMode) "Clinical Guidance" else "What This Means"
+        c.drawText(guidanceTitle, MARGIN, y, textPaint(16f, bold = true))
         y += 22f
-        val guidance = when {
+        val guidance = if (doctorMode) when {
             level.contains("Critical", ignoreCase = true) ->
                 "Immediate gynaecological consultation recommended.\nMultiple strong PCOS indicators detected."
             level.contains("High", ignoreCase = true) ->
@@ -137,17 +149,86 @@ object ReportGenerator {
                 "Monitor symptoms over next 4 weeks.\nConsider evaluation if symptoms persist."
             else ->
                 "Continue monitoring. Low risk indicators at this time."
+        } else when {
+            level.contains("Critical", ignoreCase = true) ->
+                "Several signals suggest it's worth speaking to a doctor soon.\nThis app is not a diagnosis — a specialist can give you a full picture."
+            level.contains("High", ignoreCase = true) ->
+                "Some signals are worth discussing with your doctor.\nBringing this report can help start that conversation."
+            level.contains("Moderate", ignoreCase = true) ->
+                "Keep tracking over the next few weeks.\nIf symptoms continue, consider seeing a doctor."
+            else ->
+                "Things look relatively calm right now. Keep logging to stay informed."
         }
         for (line in guidance.lines()) {
             c.drawText(line, MARGIN, y, textPaint(12f))
             y += 18f
         }
 
+        // ── Clinical biomarkers block (doctor mode only) ──────────────────
+        if (doctorMode && y < CONTENT_BOTTOM - 160f) {
+            y += 14f
+            c.drawText("Objective Biomarker Summary", MARGIN, y, textPaint(16f, bold = true))
+            y += 8f
+            c.drawLine(MARGIN, y, PAGE_W - MARGIN, y, Paint().apply { color = Color.LTGRAY; strokeWidth = 1f })
+            y += 16f
+
+            // Voice acoustics
+            val f0Sd   = healthEntries.lastOrNull { it.entryType == "f0_sd" }
+            val f0Min  = healthEntries.lastOrNull { it.entryType == "f0_min" }
+            val f0Mean = healthEntries.lastOrNull { it.entryType == "f0_mean" }
+
+            c.drawText("Acoustic Biomarkers (YIN pitch, 16 kHz, on-device)", MARGIN, y, textPaint(12f, bold = true))
+            y += 18f
+            if (f0Sd != null) {
+                val bioRows = listOf(
+                    Triple("F0 SD (primary cycle-phase signal)", "${"%.2f".format(f0Sd.numericValue)} Hz", "↓ in luteal vs follicular phase"),
+                    Triple("F0 min (5th-percentile)", "${"%.1f".format(f0Min?.numericValue ?: 0.0)} Hz", "↑ in luteal phase"),
+                    Triple("F0 mean (baseline anchor)", "${"%.1f".format(f0Mean?.numericValue ?: 0.0)} Hz", "No expected phase shift"),
+                )
+                for ((label, value, note) in bioRows) {
+                    c.drawText("•  $label:", MARGIN + 8f, y, textPaint(10f))
+                    c.drawText(value, MARGIN + 240f, y, textPaint(10f, bold = true))
+                    c.drawText(note, MARGIN + 300f, y, textPaint(9f, color = Color.GRAY))
+                    y += 16f
+                }
+                c.drawText("Ref: Ziemer et al., JMIR Formative Research 2025 (PMC11737864)", MARGIN + 8f, y, textPaint(9f, color = Color.GRAY))
+            } else {
+                c.drawText("  No voice recording on file.", MARGIN + 8f, y, textPaint(10f, color = Color.GRAY))
+            }
+            y += 18f
+
+            // Body composition
+            val whtr   = healthEntries.lastOrNull { it.entryType == "whtr" }
+            val waist  = healthEntries.lastOrNull { it.entryType == "waist_cm" }
+            val height = healthEntries.lastOrNull { it.entryType == "height_cm" }
+
+            c.drawText("Body Composition", MARGIN, y, textPaint(12f, bold = true))
+            y += 16f
+            if (whtr != null) {
+                val whtrVal = whtr.numericValue ?: 0.0
+                val band = when { whtrVal < 0.43 -> "Low" ; whtrVal < 0.53 -> "Healthy" ; whtrVal < 0.58 -> "Increased" ; else -> "High" }
+                val compRows = listOf(
+                    Triple("Waist circumference", "${"%.1f".format(waist?.numericValue ?: 0.0)} cm", ""),
+                    Triple("Height", "${"%.1f".format(height?.numericValue ?: 0.0)} cm", ""),
+                    Triple("WHtR (insulin resistance proxy)", "${"%.3f".format(whtrVal)}", "Band: $band  (ref ≤0.43 / 0.43–0.53 / 0.53–0.58 / >0.58)"),
+                )
+                for ((label, value, note) in compRows) {
+                    c.drawText("•  $label:", MARGIN + 8f, y, textPaint(10f))
+                    c.drawText(value, MARGIN + 240f, y, textPaint(10f, bold = true))
+                    if (note.isNotEmpty()) c.drawText(note, MARGIN + 300f, y, textPaint(9f, color = Color.GRAY))
+                    y += 16f
+                }
+                c.drawText("Ref: Lee et al., Obesity Reviews 2024 — WHtR superior to BMI for IR in PCOS", MARGIN + 8f, y, textPaint(9f, color = Color.GRAY))
+            } else {
+                c.drawText("  No body measurements recorded.", MARGIN + 8f, y, textPaint(10f, color = Color.GRAY))
+            }
+        }
+
         doc.finishPage(page)
     }
 
     // ── Page 2: 4-week trend chart ────────────────────────────────────────
-    private fun drawPage2(doc: PdfDocument, chartBitmap: Bitmap) {
+    private fun drawPage2(doc: PdfDocument, chartBitmap: Bitmap, doctorMode: Boolean) {
         val page = doc.startPage(PdfDocument.PageInfo.Builder(PAGE_W, PAGE_H, 2).create())
         val c = page.canvas
         drawHeader(c)
@@ -166,11 +247,16 @@ object ReportGenerator {
         // Legend
         c.drawText("Chart Legend:", MARGIN, y, textPaint(12f, bold = true))
         y += 18f
-        val legend = listOf(
-            Color.parseColor("#E91E63") to "Acne score (TFLite)",
-            Color.parseColor("#2196F3") to "Voice energy",
-            Color.parseColor("#FF9800") to "Fatigue (normalized)",
-            Color.parseColor("#9C27B0") to "Risk score (normalized)"
+        val legend = if (doctorMode) listOf(
+            Color.parseColor("#E91E63") to "Acne score (CV model, normalized)",
+            Color.parseColor("#2196F3") to "Voice energy (normalized)",
+            Color.parseColor("#FF9800") to "Fatigue (0–5 scale, normalized)",
+            Color.parseColor("#9C27B0") to "Risk score (0–12 scale, normalized)"
+        ) else listOf(
+            Color.parseColor("#E91E63") to "Skin / acne signals",
+            Color.parseColor("#2196F3") to "Voice / energy level",
+            Color.parseColor("#FF9800") to "Fatigue",
+            Color.parseColor("#9C27B0") to "Overall risk trend"
         )
         for ((col, lbl) in legend) {
             c.drawRoundRect(RectF(MARGIN, y - 10f, MARGIN + 24f, y + 4f),
@@ -245,20 +331,30 @@ object ReportGenerator {
         return bmp
     }
 
-    // ── Page 3: Symptom log table ─────────────────────────────────────────
-    private fun drawPage3(doc: PdfDocument, symptomLogs: List<SymptomLog>) {
+    // ── Page 3: Symptom log table + generic health entries appendix ──────
+    private fun drawPage3(
+        doc: PdfDocument,
+        symptomLogs: List<SymptomLog>,
+        healthEntries: List<HealthEntry>,
+        doctorMode: Boolean
+    ) {
         val page = doc.startPage(PdfDocument.PageInfo.Builder(PAGE_W, PAGE_H, 3).create())
         val c = page.canvas
         drawHeader(c)
         drawFooter(c)
 
         var y = CONTENT_TOP + 20f
-        c.drawText("Symptom Log — Last 30 Days", MARGIN, y, textPaint(18f, bold = true))
+        val pageTitle = if (doctorMode) "Structured Symptom Appendix — Last 30 Days"
+                        else "Your Symptom Log — Last 30 Days"
+        c.drawText(pageTitle, MARGIN, y, textPaint(18f, bold = true))
         y += 28f
 
         // Table header
-        val cols = listOf("Date", "Acne", "Voice", "Fatigue", "Skin D.", "Wt Gain", "Hair")
-        val colW = floatArrayOf(100f, 65f, 65f, 65f, 65f, 70f, 65f)
+        val cols = if (doctorMode)
+            listOf("Date", "Acne score", "Voice energy", "Fatigue (0–5)", "Acanthosis", "Wt gain", "Hirsutism")
+        else
+            listOf("Date", "Acne", "Voice", "Fatigue", "Skin D.", "Wt Gain", "Hair")
+        val colW = floatArrayOf(90f, 70f, 75f, 75f, 70f, 60f, 75f)
         var x = MARGIN
         c.drawRect(RectF(MARGIN, y - 14f, PAGE_W - MARGIN, y + 6f),
             Paint().apply { color = colorPrimary })
@@ -293,11 +389,47 @@ object ReportGenerator {
         }
         y += 20f
 
+        // Generic health entries sub-table
+        if (healthEntries.isNotEmpty() && y < CONTENT_BOTTOM - 60f) {
+            y += 14f
+            val subTitle = if (doctorMode) "General Health Module — Structured Entries" else "General Wellness Log"
+            c.drawText(subTitle, MARGIN, y, textPaint(14f, bold = true))
+            y += 20f
+            val eCols = listOf("Date", "Metric", "Value")
+            val eColW = floatArrayOf(90f, 180f, 100f)
+            var ex = MARGIN
+            c.drawRect(RectF(MARGIN, y - 13f, PAGE_W - MARGIN, y + 5f),
+                Paint().apply { color = Color.parseColor("#1976D2") })
+            for ((i, h) in eCols.withIndex()) {
+                c.drawText(h, ex + 4f, y, textPaint(10f, bold = true, color = Color.WHITE))
+                ex += eColW[i]
+            }
+            y += 16f
+            val eFmt = SimpleDateFormat("MM/dd", Locale.getDefault())
+            healthEntries.take(20).forEachIndexed { idx, e ->
+                if (y > CONTENT_BOTTOM - 16f) return@forEachIndexed
+                val rowColor = if (idx % 2 == 0) Color.parseColor("#E3F2FD") else Color.WHITE
+                c.drawRect(RectF(MARGIN, y - 12f, PAGE_W - MARGIN, y + 4f),
+                    Paint().apply { color = rowColor })
+                ex = MARGIN
+                val displayVal = e.numericValue?.let { "%.1f".format(it) } ?: (e.textValue ?: "—")
+                val metricLabel = e.entryType.replace("_", " ")
+                    .replaceFirstChar { it.uppercase() }
+                val row = listOf(eFmt.format(Date(e.timestamp)), metricLabel, displayVal)
+                for ((i, cell) in row.withIndex()) {
+                    c.drawText(cell, ex + 4f, y, textPaint(9f))
+                    ex += eColW[i]
+                }
+                y += 15f
+            }
+        }
+
         // Clinical notes section
         if (y < CONTENT_BOTTOM - 100f) {
+            y += 8f
             c.drawText("Clinical Notes", MARGIN, y, textPaint(16f, bold = true))
             y += 22f
-            c.drawRect(RectF(MARGIN, y, PAGE_W - MARGIN, y + 120f),
+            c.drawRect(RectF(MARGIN, y, PAGE_W - MARGIN, y + 100f),
                 Paint().apply { color = Color.TRANSPARENT; style = Paint.Style.STROKE
                     strokeWidth = 1f; color = Color.LTGRAY })
             c.drawText("(Space for doctor's annotations)", MARGIN + 10f, y + 20f,
@@ -311,7 +443,7 @@ object ReportGenerator {
     private fun drawHeader(c: Canvas) {
         c.drawRect(RectF(0f, 0f, PAGE_W.toFloat(), 4f), Paint().apply { color = colorPrimary })
         c.drawText(
-            "Saathi PCOS Risk Report — For Medical Professional Review",
+            "Saathi — Women's Health Summary",
             MARGIN, MARGIN + 28f, textPaint(13f, bold = true, color = colorPrimary)
         )
         c.drawLine(MARGIN, MARGIN + 38f, PAGE_W - MARGIN, MARGIN + 38f,

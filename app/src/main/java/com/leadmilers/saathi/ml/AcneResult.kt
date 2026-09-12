@@ -47,7 +47,11 @@ sealed class AcneResult {
         val score: Float,
         val hasSignificantAcne: Boolean,
         val confidence: Float,
-        val skinCoverage: Float
+        val skinCoverage: Float,
+        val hirsutismScore: Float = 0f,
+        val acneRegions: List<String> = emptyList(),
+        val observations: String = "",
+        val guidance: String = ""
     ) : AcneResult()
 
     // ── Quality failure enum ─────────────────────────────────────────────────
