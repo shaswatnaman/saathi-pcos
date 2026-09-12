@@ -80,11 +80,12 @@ class VoiceAnalyzer(private val context: Context) {
 
     private fun normalizeAndStore(rms: Float, path: String): VoiceResult {
         val baseline = prefs.getFloat(KEY_BASELINE_RMS, -1f)
-        return if (baseline < 0f || rms > baseline) {
-            // First recording or louder than baseline → set as new baseline = 1.0
+        return if (baseline < 0f) {
+            // First recording only — lock in as the personal baseline
             prefs.edit().putFloat(KEY_BASELINE_RMS, rms).apply()
             VoiceResult(energyScore = 1.0f, recordingPath = path, isBaseline = true)
         } else {
+            // Score = fraction of baseline energy; louder than baseline clamps to 1.0
             val score = (rms / baseline).coerceIn(0f, 1f)
             VoiceResult(energyScore = score, recordingPath = path, isBaseline = false)
         }
