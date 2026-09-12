@@ -1,7 +1,6 @@
 package com.leadmilers.saathi.ml
 
 import android.content.Context
-import android.content.SharedPreferences
 import android.media.MediaRecorder
 import android.os.Build
 import kotlinx.coroutines.Dispatchers
@@ -12,20 +11,18 @@ import kotlin.math.sqrt
 
 class VoiceAnalyzer(private val context: Context) {
 
-    private val prefs: SharedPreferences =
-        context.getSharedPreferences("voice_prefs", Context.MODE_PRIVATE)
-
     companion object {
-        private const val KEY_BASELINE_RMS = "baseline_rms"
         private const val RECORD_DURATION_MS = 10_000L
         private const val SAMPLE_INTERVAL_MS = 100L
         private const val SAMPLE_COUNT = (RECORD_DURATION_MS / SAMPLE_INTERVAL_MS).toInt()
+
+        // maxAmplitude range 0-32767. A clear speaking voice at ~30 cm
+        // registers ~10 000-14 000 RMS. Values above this clamp to 1.0.
+        private const val REFERENCE_RMS = 12_000f
     }
 
     private var recorder: MediaRecorder? = null
     private val amplitudeSamples = mutableListOf<Float>()
-
-    val hasBaseline: Boolean get() = prefs.contains(KEY_BASELINE_RMS)
 
     // Called from UI coroutine; returns live amplitude 0-1 via callback
     suspend fun record(
@@ -63,8 +60,8 @@ class VoiceAnalyzer(private val context: Context) {
         recorder = null
 
         val rms = computeRms(amplitudeSamples)
-        val result = normalizeAndStore(rms, outputFile.absolutePath)
-        result
+        val score = (rms / REFERENCE_RMS).coerceIn(0f, 1f)
+        VoiceResult(energyScore = score, recordingPath = outputFile.absolutePath, isBaseline = false)
     }
 
     fun stopEarly(): Unit {
@@ -76,22 +73,5 @@ class VoiceAnalyzer(private val context: Context) {
         if (samples.isEmpty()) return 0f
         val meanSquare = samples.map { it * it }.average().toFloat()
         return sqrt(meanSquare)
-    }
-
-    private fun normalizeAndStore(rms: Float, path: String): VoiceResult {
-        val baseline = prefs.getFloat(KEY_BASELINE_RMS, -1f)
-        return if (baseline < 0f) {
-            // First recording only — lock in as the personal baseline
-            prefs.edit().putFloat(KEY_BASELINE_RMS, rms).apply()
-            VoiceResult(energyScore = 1.0f, recordingPath = path, isBaseline = true)
-        } else {
-            // Score = fraction of baseline energy; louder than baseline clamps to 1.0
-            val score = (rms / baseline).coerceIn(0f, 1f)
-            VoiceResult(energyScore = score, recordingPath = path, isBaseline = false)
-        }
-    }
-
-    fun resetBaseline() {
-        prefs.edit().remove(KEY_BASELINE_RMS).apply()
     }
 }

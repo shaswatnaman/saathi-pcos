@@ -89,7 +89,7 @@ private fun VoiceRecorderContent() {
 
         // Result card
         result?.let { r ->
-            ResultCard(r, analyzer.hasBaseline)
+            ResultCard(r)
         }
 
         // Status
@@ -115,10 +115,7 @@ private fun VoiceRecorderContent() {
                             liveAmplitudes = (liveAmplitudes.drop(1) + amplitude)
                         }
                         result = voiceResult
-                        statusMessage = if (voiceResult.isBaseline)
-                            "Baseline set! Future recordings compared to this."
-                        else
-                            "Score saved to today's log."
+                        statusMessage = "Score saved to today's log."
                         saveToSymptomLog(repository, voiceResult)
                     } catch (e: Exception) {
                         statusMessage = "Recording failed: ${e.message}"
@@ -188,7 +185,7 @@ private fun Waveform(amplitudes: List<Float>, isRecording: Boolean) {
 }
 
 @Composable
-private fun ResultCard(result: VoiceResult, hasBaseline: Boolean) {
+private fun ResultCard(result: VoiceResult) {
     val scorePercent = (result.energyScore * 100).roundToInt()
     val color = when {
         result.energyScore >= 0.75f -> Color(0xFF43A047)
@@ -196,7 +193,6 @@ private fun ResultCard(result: VoiceResult, hasBaseline: Boolean) {
         else -> Color(0xFFE53935)
     }
     val label = when {
-        result.isBaseline -> "Baseline established"
         result.energyScore >= 0.75f -> "Good energy — normal"
         result.energyScore >= 0.50f -> "Moderate fatigue"
         else -> "Low energy — possible fatigue"
