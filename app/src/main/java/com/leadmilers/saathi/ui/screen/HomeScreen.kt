@@ -8,6 +8,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Assessment
+import androidx.compose.material.icons.filled.Laptop
 import androidx.compose.material3.*
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
@@ -30,12 +31,19 @@ import com.leadmilers.saathi.SaathiApp
 import com.leadmilers.saathi.data.entity.RiskAssessment
 import com.leadmilers.saathi.data.entity.SymptomLog
 import com.leadmilers.saathi.ml.RiskScorer
+import com.leadmilers.saathi.office.OfficeBridge
 import com.leadmilers.saathi.report.ReportGenerator
 import com.leadmilers.saathi.ui.viewmodel.HomeViewModel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
+
+private enum class SignalConfidence(val label: String, val color: Color) {
+    VALIDATED("Validated", Color(0xFF4CAF50)),
+    EXPLORATORY("Exploratory", Color(0xFFFF9800)),
+    EXPERIMENTAL("Experimental", Color(0xFF9E9E9E))
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -45,6 +53,7 @@ fun HomeScreen(onLogTodayClick: () -> Unit = {}) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val snackbarHost = remember { SnackbarHostState() }
+    val isOfficeAvailable = remember { OfficeBridge.isAvailable(context) }
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHost) },
@@ -75,11 +84,18 @@ fun HomeScreen(onLogTodayClick: () -> Unit = {}) {
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary
                 )
-                Text(
-                    "PCOS Cross-Signal Tracker",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(
+                        "PCOS Cross-Signal Tracker",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f)
+                    )
+                    if (isOfficeAvailable) OfficeStatusChip()
+                }
 
                 RiskLevelCard(state.latestRisk)
 
@@ -97,8 +113,15 @@ fun HomeScreen(onLogTodayClick: () -> Unit = {}) {
                                 val repo = (context.applicationContext as SaathiApp).repository
                                 val risks = repo.recentRiskAssessments(30).first()
                                 val symptoms = repo.recentSymptomLogs(30).first()
-                                ReportGenerator.generate(context, risks, symptoms)
-                                snackbarHost.showSnackbar("Report saved to Downloads")
+                                val pdfPath = ReportGenerator.generate(context, risks, symptoms)
+                                if (isOfficeAvailable) {
+                                    val msg = OfficeBridge.sendHealthReport(
+                                        context, pdfPath, risks.firstOrNull(), symptoms.firstOrNull()
+                                    )
+                                    snackbarHost.showSnackbar(msg)
+                                } else {
+                                    snackbarHost.showSnackbar("Report saved to Downloads")
+                                }
                             } catch (e: Exception) {
                                 snackbarHost.showSnackbar("Report failed: ${e.message}")
                             }
@@ -106,17 +129,53 @@ fun HomeScreen(onLogTodayClick: () -> Unit = {}) {
                     },
                     modifier = Modifier.fillMaxWidth(),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                        containerColor = if (isOfficeAvailable)
+                            MaterialTheme.colorScheme.primary
+                        else
+                            MaterialTheme.colorScheme.secondaryContainer,
+                        contentColor = if (isOfficeAvailable)
+                            MaterialTheme.colorScheme.onPrimary
+                        else
+                            MaterialTheme.colorScheme.onSecondaryContainer
                     )
                 ) {
-                    Icon(Icons.Default.Assessment, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Icon(
+                        if (isOfficeAvailable) Icons.Default.Laptop else Icons.Default.Assessment,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
                     Spacer(Modifier.width(8.dp))
-                    Text("Generate PDF Report")
+                    Text(if (isOfficeAvailable) "Generate & Send to Doctor" else "Generate PDF Report")
                 }
 
                 Spacer(Modifier.height(80.dp))
             }
+        }
+    }
+}
+
+@Composable
+private fun OfficeStatusChip() {
+    Surface(
+        shape = RoundedCornerShape(50),
+        color = MaterialTheme.colorScheme.primaryContainer
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Icon(
+                Icons.Default.Laptop,
+                contentDescription = null,
+                modifier = Modifier.size(12.dp),
+                tint = MaterialTheme.colorScheme.onPrimaryContainer
+            )
+            Text(
+                "iQOO Office",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onPrimaryContainer
+            )
         }
     }
 }
@@ -152,35 +211,51 @@ private fun RiskLevelCard(risk: RiskAssessment?) {
                     color = Color.White.copy(alpha = 0.85f),
                     style = MaterialTheme.typography.bodySmall)
             }
+            HorizontalDivider(
+                color = Color.White.copy(alpha = 0.25f),
+                modifier = Modifier.padding(top = 6.dp)
+            )
+            Text(
+                "Not a medical diagnosis — consult a gynaecologist for evaluation",
+                color = Color.White.copy(alpha = 0.65f),
+                style = MaterialTheme.typography.labelSmall
+            )
         }
     }
 }
 
+private data class MetricInfo(
+    val label: String,
+    val value: String,
+    val isGood: Boolean,
+    val confidence: SignalConfidence
+)
+
 @Composable
 private fun MetricGrid(symptom: SymptomLog?, cycleLength: Int?) {
     val metrics = listOf(
-        Triple("Cycle", cycleLength?.let { "${it}d" } ?: "—",
-            cycleLength?.let { it in 21..35 } ?: true),
-        Triple("Acne Score", symptom?.let { "%.0f%%".format(it.acneScore * 100) } ?: "—",
-            (symptom?.acneScore ?: 0f) < 0.5f),
-        Triple("Voice Energy", symptom?.let { "%.0f%%".format(it.voiceEnergyScore * 100) } ?: "—",
-            (symptom?.voiceEnergyScore ?: 1f) >= 0.6f),
-        Triple("Fatigue", symptom?.let { "${it.fatigue}/5" } ?: "—",
-            (symptom?.fatigue ?: 0) <= 3)
+        MetricInfo("Cycle", cycleLength?.let { "${it}d" } ?: "—",
+            cycleLength?.let { it in 21..35 } ?: true, SignalConfidence.VALIDATED),
+        MetricInfo("Acne", symptom?.let { "%.0f%%".format(it.acneScore * 100) } ?: "—",
+            (symptom?.acneScore ?: 0f) < 0.5f, SignalConfidence.EXPLORATORY),
+        MetricInfo("Voice", symptom?.let { "%.0f%%".format(it.voiceEnergyScore * 100) } ?: "—",
+            (symptom?.voiceEnergyScore ?: 1f) >= 0.6f, SignalConfidence.EXPERIMENTAL),
+        MetricInfo("Fatigue", symptom?.let { "${it.fatigue}/5" } ?: "—",
+            (symptom?.fatigue ?: 0) <= 3, SignalConfidence.VALIDATED)
     )
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        metrics.forEach { (label, value, isGood) ->
-            MetricTile(label, value, isGood, Modifier.weight(1f))
+        metrics.forEach { metric ->
+            MetricTile(metric, Modifier.weight(1f))
         }
     }
 }
 
 @Composable
-private fun MetricTile(label: String, value: String, isGood: Boolean, modifier: Modifier) {
-    val color = if (isGood) Color(0xFF4CAF50) else Color(0xFFF44336)
+private fun MetricTile(metric: MetricInfo, modifier: Modifier) {
+    val color = if (metric.isGood) Color(0xFF4CAF50) else Color(0xFFF44336)
     Card(
         modifier = modifier,
         shape = RoundedCornerShape(12.dp),
@@ -189,11 +264,16 @@ private fun MetricTile(label: String, value: String, isGood: Boolean, modifier: 
         Column(
             modifier = Modifier.padding(10.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(4.dp)
+            verticalArrangement = Arrangement.spacedBy(2.dp)
         ) {
-            Text(value, fontWeight = FontWeight.Bold, fontSize = 18.sp, color = color)
-            Text(label, style = MaterialTheme.typography.labelSmall,
+            Text(metric.value, fontWeight = FontWeight.Bold, fontSize = 18.sp, color = color)
+            Text(metric.label, style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                metric.confidence.label,
+                style = MaterialTheme.typography.labelSmall.copy(fontSize = 8.sp),
+                color = metric.confidence.color.copy(alpha = 0.85f)
+            )
         }
     }
 }
