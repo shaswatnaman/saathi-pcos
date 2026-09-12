@@ -47,20 +47,26 @@ object ReportGenerator {
         riskAssessments: List<RiskAssessment>,
         symptomLogs: List<SymptomLog>,
         patientName: String = "Patient"
-    ): String = withContext(Dispatchers.IO) {
-        val dateStr = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
-        val fileName = "Saathi_Report_$dateStr.pdf"
+    ): String {
+        // Chart view must be created on the Main thread (needs Looper)
+        val chartBitmap = withContext(Dispatchers.Main) {
+            buildChartBitmap(context, symptomLogs, riskAssessments)
+        }
 
-        val doc = PdfDocument()
-        val latest = riskAssessments.firstOrNull()
+        return withContext(Dispatchers.IO) {
+            val dateStr  = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+            val fileName = "Saathi_Report_$dateStr.pdf"
+            val doc      = PdfDocument()
+            val latest   = riskAssessments.firstOrNull()
 
-        drawPage1(doc, latest, patientName, dateStr)
-        drawPage2(doc, context, symptomLogs, riskAssessments)
-        drawPage3(doc, symptomLogs)
+            drawPage1(doc, latest, patientName, dateStr)
+            drawPage2(doc, chartBitmap)
+            drawPage3(doc, symptomLogs)
 
-        val path = saveDocument(context, doc, fileName)
-        doc.close()
-        path
+            val path = saveDocument(context, doc, fileName)
+            doc.close()
+            path
+        }
     }
 
     // ── Page 1: Summary ──────────────────────────────────────────────────
@@ -141,10 +147,7 @@ object ReportGenerator {
     }
 
     // ── Page 2: 4-week trend chart ────────────────────────────────────────
-    private fun drawPage2(
-        doc: PdfDocument, context: Context,
-        symptomLogs: List<SymptomLog>, riskAssessments: List<RiskAssessment>
-    ) {
+    private fun drawPage2(doc: PdfDocument, chartBitmap: Bitmap) {
         val page = doc.startPage(PdfDocument.PageInfo.Builder(PAGE_W, PAGE_H, 2).create())
         val c = page.canvas
         drawHeader(c)
@@ -154,7 +157,6 @@ object ReportGenerator {
         c.drawText("4-Week Trend Analysis", MARGIN, y, textPaint(18f, bold = true))
         y += 30f
 
-        val chartBitmap = renderChart(context, symptomLogs, riskAssessments)
         val chartW = (PAGE_W - MARGIN * 2).toInt()
         val chartH = 360
         val scaled = Bitmap.createScaledBitmap(chartBitmap, chartW, chartH, true)
@@ -180,7 +182,7 @@ object ReportGenerator {
         doc.finishPage(page)
     }
 
-    private fun renderChart(
+    private fun buildChartBitmap(
         context: Context,
         symptomLogs: List<SymptomLog>,
         riskAssessments: List<RiskAssessment>
