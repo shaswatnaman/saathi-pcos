@@ -16,14 +16,15 @@ object SyncManager {
         context: Context,
         repo: SaathiRepository,
         prefs: UserPrefs,
-        nearby: NearbyManager,
+        nearby: LanSyncManager,
         scope: CoroutineScope,
     ) {
-        if (!prefs.isPaired) return
+        // Always advertise — gynac can connect without requiring explicit pairing
         scope.launch(Dispatchers.IO) {
-            val cycles   = repo.recentCycleLogs(1).first()
-            val symptoms = repo.recentSymptomLogs(1).first()
-            val packet   = buildPacket(prefs, cycles.firstOrNull(), symptoms.firstOrNull())
+            val cycles   = repo.recentCycleLogs(30).first()
+            val symptoms = repo.recentSymptomLogs(30).first()
+            val risks    = repo.recentRiskAssessments(30).first()
+            val packet   = buildPacket(prefs, cycles, symptoms, risks)
             nearby.advertiseAndPush(packet)
             prefs.lastSyncAt = System.currentTimeMillis()
         }
@@ -31,10 +32,13 @@ object SyncManager {
 
     private fun buildPacket(
         prefs: UserPrefs,
-        latestCycle: CycleLog?,
-        latestSymptom: SymptomLog?,
+        cycles: List<CycleLog>,
+        symptoms: List<SymptomLog>,
+        risks: List<com.leadmilers.saathi.data.entity.RiskAssessment>,
     ): SyncPacket {
-        val now = System.currentTimeMillis()
+        val now           = System.currentTimeMillis()
+        val latestCycle   = cycles.firstOrNull()
+        val latestSymptom = symptoms.firstOrNull()
 
         val cycleDay = latestCycle?.let {
             ((now - it.date) / 86_400_000L + 1L).toInt().coerceAtLeast(1)
@@ -53,16 +57,28 @@ object SyncManager {
         return SyncPacket(
             senderDeviceId = prefs.deviceId,
             timestamp      = now,
-            cycleDay       = if (prefs.shareCycle) cycleDay else null,
-            cycleLength    = if (prefs.shareCycle) cycleLen else null,
-            phaseName      = if (prefs.shareCycle) phase else null,
-            isInPeriod     = if (prefs.sharePeriod) (cycleDay != null && cycleDay <= 6) else null,
-            flowIntensity  = if (prefs.sharePeriod) latestCycle?.flowIntensity else null,
-            mood           = if (prefs.shareMood) null else null, // mood comes from HealthEntry if shared
-            fatigueLevel   = if (prefs.shareEnergy) latestSymptom?.fatigue else null,
-            skinDarkening  = if (prefs.shareSymptoms) latestSymptom?.skinDarkening else null,
-            hairIssues     = if (prefs.shareSymptoms) latestSymptom?.hairIssues else null,
-            weightGain     = if (prefs.shareSymptoms) latestSymptom?.weightGain else null,
+            cycleDay       = cycleDay,
+            cycleLength    = cycleLen,
+            phaseName      = phase,
+            isInPeriod     = cycleDay != null && cycleDay <= 6,
+            flowIntensity  = latestCycle?.flowIntensity,
+            fatigueLevel   = latestSymptom?.fatigue,
+            skinDarkening  = latestSymptom?.skinDarkening,
+            hairIssues     = latestSymptom?.hairIssues,
+            weightGain     = latestSymptom?.weightGain,
+            cycleHistory   = cycles.map { c ->
+                SimpleCycleEntry(c.date, c.cycleLength, c.flowIntensity)
+            },
+            symptomHistory = symptoms.map { s ->
+                SimpleSymptomEntry(
+                    date = s.date, fatigue = s.fatigue, acneScore = s.acneScore,
+                    skinDarkening = s.skinDarkening, hairIssues = s.hairIssues,
+                    weightGain = s.weightGain, weight = s.weight,
+                )
+            },
+            riskHistory = risks.map { r ->
+                SimpleRiskEntry(r.date, r.totalScore, r.riskLevel)
+            },
         )
     }
 }

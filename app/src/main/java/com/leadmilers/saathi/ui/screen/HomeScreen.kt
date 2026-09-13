@@ -7,6 +7,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import android.content.Intent
+import android.net.Uri
+import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -18,15 +21,22 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.leadmilers.saathi.SaathiApp
+import com.leadmilers.saathi.companion.QrHelper
+import com.leadmilers.saathi.companion.SyncManager
 import com.leadmilers.saathi.data.entity.CycleLog
 import com.leadmilers.saathi.data.entity.RiskAssessment
 import com.leadmilers.saathi.data.entity.SymptomLog
 import com.leadmilers.saathi.ml.RiskScorer
+import com.leadmilers.saathi.report.ReportGenerator
 import com.leadmilers.saathi.ui.components.*
 import com.leadmilers.saathi.ui.theme.*
 import com.leadmilers.saathi.ui.viewmodel.HomeViewModel
 import java.util.*
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 
 @Composable
 fun HomeScreen(
@@ -36,8 +46,32 @@ fun HomeScreen(
     onReportClick: () -> Unit = {},
     onSettingsClick: () -> Unit = {},
 ) {
+    val context = LocalContext.current
+    val app     = context.applicationContext as SaathiApp
     val vm: HomeViewModel = viewModel()
     val state by vm.uiState.collectAsState()
+    val scope = rememberCoroutineScope()
+    val snackbar = remember { SnackbarHostState() }
+    var pdfBusy by remember { mutableStateOf(false) }
+
+    // SELF is always the server side — generate token lazily and advertise.
+    // Companion/Gynac discover by entering this same token.
+    // Server waits 2 min for a connection, then closes quietly.
+    LaunchedEffect(Unit) {
+        if (app.userPrefs.pairingToken.isBlank()) {
+            app.userPrefs.pairingToken = QrHelper.generateToken()
+        }
+        app.lanSyncManager.configure(
+            localName   = app.userPrefs.userName.ifBlank { "Saathi" },
+            pairedToken = app.userPrefs.pairingToken,
+            onPacket    = {},
+        )
+        SyncManager.buildAndPush(context, app.repository, app.userPrefs, app.lanSyncManager, scope)
+    }
+
+    DisposableEffect(Unit) {
+        onDispose { app.lanSyncManager.stopAll() }
+    }
 
     Column(
         modifier = Modifier
@@ -159,9 +193,32 @@ fun HomeScreen(
                     modifier = Modifier.weight(1f),
                 )
                 SaathiQuickActionTile(
-                    icon    = Icons.Outlined.Description,
-                    label   = "View report",
-                    onClick = onReportClick,
+                    icon    = Icons.Filled.PictureAsPdf,
+                    label   = if (pdfBusy) "Generating…" else "Export PDF",
+                    onClick = {
+                        if (!pdfBusy) scope.launch {
+                            pdfBusy = true
+                            try {
+                                val risks   = app.repository.allRiskAssessments.first()
+                                val syms    = app.repository.allSymptomLogs.first()
+                                val entries = app.repository.allHealthEntries.first()
+                                val name    = app.userPrefs.userName.ifBlank { "User" }
+                                val path = ReportGenerator.generate(
+                                    context, risks, syms, name,
+                                    doctorMode = false, healthEntries = entries
+                                )
+                                val uri = Uri.parse(path)
+                                context.startActivity(
+                                    Intent(Intent.ACTION_VIEW).apply {
+                                        setDataAndType(uri, "application/pdf")
+                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    }
+                                )
+                            } finally {
+                                pdfBusy = false
+                            }
+                        }
+                    },
                     modifier = Modifier.weight(1f),
                 )
             }
