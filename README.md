@@ -1,4 +1,4 @@
-# Saathi — PCOS Cross-Signal Tracker
+# Saathi — PCOS Cross-Signal Tracker.
 
 **iQOO Hackathon 2026 · HealthTech Track · Team leadmilers**
 
