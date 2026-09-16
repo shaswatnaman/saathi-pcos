@@ -8,8 +8,8 @@ import kotlin.math.exp
 /**
  * PCOS risk scorer trained on 541 real patients (Kaggle PCOS dataset).
  * Logistic regression: 10-fold CV AUC = 0.862
- * Features validated against clinical data — waist-hip ratio removed
- * (not discriminating in Indian population: 97% non-PCOS also exceed 0.80).
+ * India-specific: waist-hip ratio removed (97% of healthy Indian women exceed 0.80 — Western cutoff
+ * is not valid here). Default height 155 cm per NFHS-5. WHtR thresholds from Snehalatha et al. 2007.
  */
 object RiskScorer {
 
@@ -128,8 +128,8 @@ object RiskScorer {
     }
 
     private fun bmiFromWeight(weightKg: Float): Float {
-        // default height 160cm if not stored; judges see actual BMI when weight is entered
-        return if (weightKg > 0f) weightKg / (1.60f * 1.60f) else 23f
+        // default 155cm — average Indian woman (NFHS-5); actual BMI used when weight is entered
+        return if (weightKg > 0f) weightKg / (1.55f * 1.55f) else 23f
     }
 
     fun riskLevelFromLabel(label: String): RiskLevel =

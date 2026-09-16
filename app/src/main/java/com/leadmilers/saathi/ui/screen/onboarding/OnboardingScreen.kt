@@ -7,6 +7,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -40,18 +42,26 @@ import kotlinx.coroutines.launch
 import java.util.*
 
 private sealed class OnboardingPage {
-    object Welcome         : OnboardingPage()
-    object RoleSelect      : OnboardingPage()
+    object Welcome           : OnboardingPage()
+    object RoleSelect        : OnboardingPage()
     // Self path
-    object SelfName        : OnboardingPage()
-    object SelfGoals       : OnboardingPage()
-    object SelfCycle       : OnboardingPage()
-    object SelfDone        : OnboardingPage()
+    object SelfName          : OnboardingPage()
+    object SelfSymptomSelect : OnboardingPage()
+    object SelfPeriodDetail  : OnboardingPage()
+    object SelfSkinDetail    : OnboardingPage()
+    object SelfHairDetail    : OnboardingPage()
+    object SelfWeightDetail  : OnboardingPage()
+    object SelfEnergyDetail  : OnboardingPage()
+    object SelfMedHistory    : OnboardingPage()
+    object SelfDone          : OnboardingPage()
     // Companion path
     object CompanionName   : OnboardingPage()
     object CompanionRole   : OnboardingPage()
     object CompanionPairing: OnboardingPage()
     object CompanionDone   : OnboardingPage()
+    // Gynac path
+    object GynacName       : OnboardingPage()
+    object GynacDone       : OnboardingPage()
 }
 
 @Composable
@@ -62,12 +72,46 @@ fun OnboardingScreen(onComplete: () -> Unit) {
     val scope   = rememberCoroutineScope()
 
     var page by remember { mutableStateOf<OnboardingPage>(OnboardingPage.Welcome) }
-    var selfName        by remember { mutableStateOf("") }
-    var companionName   by remember { mutableStateOf("") }
-    var companionRole   by remember { mutableStateOf("Partner") }
-    var selectedGoals   by remember { mutableStateOf(setOf<String>()) }
-    var cycleStartDate  by remember { mutableStateOf<Long?>(null) }
-    var cycleLength     by remember { mutableIntStateOf(28) }
+
+    // Shared
+    var selfName      by remember { mutableStateOf("") }
+    var companionName by remember { mutableStateOf("") }
+    var companionRole by remember { mutableStateOf("Partner") }
+    var gynacName     by remember { mutableStateOf("") }
+
+    // Adaptive queue — self path
+    var adaptiveQueue      by remember { mutableStateOf(listOf<OnboardingPage>()) }
+    var noticedSymptoms    by remember { mutableStateOf(setOf<String>()) }
+    // Period detail
+    var cycleStartDate     by remember { mutableStateOf<Long?>(null) }
+    var cycleLength        by remember { mutableIntStateOf(28) }
+    var periodRegularity   by remember { mutableStateOf("Irregular") }
+    var periodHeaviness    by remember { mutableStateOf("Medium") }
+    // Skin detail
+    var acneSeverity       by remember { mutableStateOf("Mild") }
+    var acneLocations      by remember { mutableStateOf(setOf<String>()) }
+    var skinDarkeningAreas by remember { mutableStateOf(setOf<String>()) }
+    // Hair detail
+    var hairChangeTypes    by remember { mutableStateOf(setOf<String>()) }
+    var hairChangeDuration by remember { mutableStateOf("<3 months") }
+    // Weight detail
+    var weightDirection    by remember { mutableStateOf("") }
+    var weightAmount       by remember { mutableStateOf("") }
+    // Energy detail
+    var fatigueLevel       by remember { mutableIntStateOf(3) }
+    var sleepQuality       by remember { mutableStateOf("Fair") }
+    var moodChanges        by remember { mutableStateOf(setOf<String>()) }
+    // Med history
+    var existingConditions by remember { mutableStateOf(setOf<String>()) }
+    var familyHistory      by remember { mutableStateOf(setOf<String>()) }
+    var currentMedications by remember { mutableStateOf("") }
+
+    // Advance through adaptive queue, falling through to SelfDone when exhausted
+    val advanceQueue: () -> Unit = {
+        val remaining = adaptiveQueue.drop(1)
+        adaptiveQueue = remaining
+        page = if (remaining.isNotEmpty()) remaining.first() else OnboardingPage.SelfDone
+    }
 
     AnimatedContent(
         targetState = page,
@@ -83,8 +127,9 @@ fun OnboardingScreen(onComplete: () -> Unit) {
             }
 
             OnboardingPage.RoleSelect -> RoleSelectPage(
-                onSelf = { page = OnboardingPage.SelfName },
+                onSelf      = { page = OnboardingPage.SelfName },
                 onCompanion = { page = OnboardingPage.CompanionName },
+                onGynac     = { page = OnboardingPage.GynacName },
             )
 
             // ── Self path ─────────────────────────────────────────────────────
@@ -94,31 +139,98 @@ fun OnboardingScreen(onComplete: () -> Unit) {
                 value       = selfName,
                 onChange    = { selfName = it },
                 onBack      = { page = OnboardingPage.RoleSelect },
-                onContinue  = { page = OnboardingPage.SelfGoals },
+                onContinue  = { page = OnboardingPage.SelfSymptomSelect },
             )
 
-            OnboardingPage.SelfGoals -> GoalsPage(
-                selected   = selectedGoals,
-                onChange   = { selectedGoals = it },
-                onBack     = { page = OnboardingPage.SelfName },
-                onContinue = { page = OnboardingPage.SelfCycle },
+            OnboardingPage.SelfSymptomSelect -> SelfSymptomSelectPage(
+                selected  = noticedSymptoms,
+                onChange  = { noticedSymptoms = it },
+                onBack    = { page = OnboardingPage.SelfName },
+                onContinue = {
+                    val q = buildAdaptiveQueue(noticedSymptoms)
+                    adaptiveQueue = q
+                    page = q.first()
+                },
             )
 
-            OnboardingPage.SelfCycle -> CyclePage(
-                selectedDate  = cycleStartDate,
-                onDate        = { cycleStartDate = it },
-                cycleLength   = cycleLength,
-                onCycleLength = { cycleLength = it },
-                onBack        = { page = OnboardingPage.SelfGoals },
-                onContinue    = {
+            OnboardingPage.SelfPeriodDetail -> SelfPeriodDetailPage(
+                cycleStartDate = cycleStartDate,
+                onDate         = { cycleStartDate = it },
+                cycleLength    = cycleLength,
+                onCycleLength  = { cycleLength = it },
+                regularity     = periodRegularity,
+                onRegularity   = { periodRegularity = it },
+                heaviness      = periodHeaviness,
+                onHeaviness    = { periodHeaviness = it },
+                onBack         = { page = adaptiveQueue.first() },
+                onContinue     = advanceQueue,
+            )
+
+            OnboardingPage.SelfSkinDetail -> SelfSkinDetailPage(
+                acneSeverity   = acneSeverity,
+                onSeverity     = { acneSeverity = it },
+                acneLocations  = acneLocations,
+                onLocations    = { acneLocations = it },
+                darkeningAreas = skinDarkeningAreas,
+                onDarkening    = { skinDarkeningAreas = it },
+                onBack         = { page = adaptiveQueue.first() },
+                onContinue     = advanceQueue,
+            )
+
+            OnboardingPage.SelfHairDetail -> SelfHairDetailPage(
+                hairChangeTypes    = hairChangeTypes,
+                onTypes            = { hairChangeTypes = it },
+                hairChangeDuration = hairChangeDuration,
+                onDuration         = { hairChangeDuration = it },
+                onBack             = { page = adaptiveQueue.first() },
+                onContinue         = advanceQueue,
+            )
+
+            OnboardingPage.SelfWeightDetail -> SelfWeightDetailPage(
+                direction  = weightDirection,
+                onDir      = { weightDirection = it },
+                amount     = weightAmount,
+                onAmount   = { weightAmount = it },
+                onBack     = { page = adaptiveQueue.first() },
+                onContinue = advanceQueue,
+            )
+
+            OnboardingPage.SelfEnergyDetail -> SelfEnergyDetailPage(
+                fatigueLevel = fatigueLevel,
+                onFatigue    = { fatigueLevel = it },
+                sleepQuality = sleepQuality,
+                onSleep      = { sleepQuality = it },
+                moodChanges  = moodChanges,
+                onMood       = { moodChanges = it },
+                onBack       = { page = adaptiveQueue.first() },
+                onContinue   = advanceQueue,
+            )
+
+            OnboardingPage.SelfMedHistory -> SelfMedHistoryPage(
+                conditions   = existingConditions,
+                onConditions = { existingConditions = it },
+                familyHx     = familyHistory,
+                onFamilyHx   = { familyHistory = it },
+                medications  = currentMedications,
+                onMedications= { currentMedications = it },
+                onBack       = { page = adaptiveQueue.first() },
+                onContinue   = {
                     scope.launch {
-                        prefs.role      = UserRole.SELF
-                        prefs.userName  = selfName
-                        prefs.goals     = selectedGoals
-                        prefs.cycleLength = cycleLength
+                        prefs.role             = UserRole.SELF
+                        prefs.userName         = selfName
+                        prefs.cycleLength      = cycleLength
+                        prefs.noticedSymptoms  = noticedSymptoms
+                        prefs.periodRegularity = periodRegularity
+                        prefs.acneSeverityLevel = acneSeverity
+                        prefs.hairLossPresent  = "Hair loss" in hairChangeTypes
+                        prefs.weightChangeDir  = weightDirection
+                        prefs.fatigueSeverity  = fatigueLevel
+                        prefs.existingConditions = existingConditions
+                        prefs.familyHistory    = familyHistory
+                        prefs.currentMedications = currentMedications
                         cycleStartDate?.let { d ->
                             prefs.lastPeriodDate = d
-                            repo.insertCycleLog(CycleLog(date = d, cycleLength = cycleLength, flowIntensity = "Medium"))
+                            repo.insertCycleLog(CycleLog(date = d, cycleLength = cycleLength, flowIntensity = periodHeaviness))
                         }
                         prefs.onboardingComplete = true
                     }
@@ -166,6 +278,23 @@ fun OnboardingScreen(onComplete: () -> Unit) {
             )
 
             OnboardingPage.CompanionDone -> CompanionDonePage(onStart = onComplete)
+
+            // ── Gynac path ─────────────────────────────────────────────────────
+            OnboardingPage.GynacName -> NamePage(
+                title       = "Your name, Doctor",
+                placeholder = "Dr. First Last",
+                value       = gynacName,
+                onChange    = { gynacName = it },
+                onBack      = { page = OnboardingPage.RoleSelect },
+                onContinue  = {
+                    prefs.role     = UserRole.GYNAC
+                    prefs.userName = gynacName
+                    prefs.onboardingComplete = true
+                    page = OnboardingPage.GynacDone
+                },
+            )
+
+            OnboardingPage.GynacDone -> GynacDonePage(name = gynacName, onStart = onComplete)
         }
     }
 }
@@ -256,7 +385,7 @@ private fun WelcomePage(onContinue: () -> Unit) {
 // ── Role select ───────────────────────────────────────────────────────────────
 
 @Composable
-private fun RoleSelectPage(onSelf: () -> Unit, onCompanion: () -> Unit) {
+private fun RoleSelectPage(onSelf: () -> Unit, onCompanion: () -> Unit, onGynac: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -302,6 +431,16 @@ private fun RoleSelectPage(onSelf: () -> Unit, onCompanion: () -> Unit) {
             subtitle    = "Understand, support and be there\nfor someone I love.",
             onClick     = onCompanion,
             accentColor = MaterialTheme.colorScheme.secondary,
+        )
+
+        Spacer(Modifier.height(16.dp))
+
+        RoleCard(
+            icon        = Icons.Outlined.MedicalServices,
+            title       = "I am a Gynecologist",
+            subtitle    = "Clinical workspace to manage and\nmonitor my patients' health.",
+            onClick     = onGynac,
+            accentColor = MaterialTheme.colorScheme.tertiary,
         )
 
         Spacer(Modifier.height(48.dp))
@@ -390,7 +529,495 @@ private fun NamePage(
     }
 }
 
-// ── Goals ─────────────────────────────────────────────────────────────────────
+// ── Adaptive queue builder ────────────────────────────────────────────────────
+
+private fun buildAdaptiveQueue(symptoms: Set<String>): List<OnboardingPage> {
+    val q = mutableListOf<OnboardingPage>()
+    if ("Irregular periods" in symptoms)
+        q.add(OnboardingPage.SelfPeriodDetail)
+    if (symptoms.any { it == "Acne / oily skin" || it == "Skin darkening" })
+        q.add(OnboardingPage.SelfSkinDetail)
+    if (symptoms.any { it == "Hair loss" || it == "Excess facial/body hair" })
+        q.add(OnboardingPage.SelfHairDetail)
+    if ("Weight changes" in symptoms)
+        q.add(OnboardingPage.SelfWeightDetail)
+    if (symptoms.any { it == "Fatigue / low energy" || it == "Mood changes" })
+        q.add(OnboardingPage.SelfEnergyDetail)
+    q.add(OnboardingPage.SelfMedHistory)
+    return q
+}
+
+// ── Symptom select ────────────────────────────────────────────────────────────
+
+private data class SymptomItem(val label: String, val icon: ImageVector)
+
+private val SYMPTOMS = listOf(
+    SymptomItem("Irregular periods",       Icons.Outlined.CalendarMonth),
+    SymptomItem("Acne / oily skin",        Icons.Outlined.Face),
+    SymptomItem("Hair loss",               Icons.Outlined.ContentCut),
+    SymptomItem("Excess facial/body hair", Icons.Outlined.Face2),
+    SymptomItem("Weight changes",          Icons.Outlined.MonitorWeight),
+    SymptomItem("Fatigue / low energy",    Icons.Outlined.BatteryAlert),
+    SymptomItem("Skin darkening",          Icons.Outlined.Contrast),
+    SymptomItem("Mood changes",            Icons.Outlined.Psychology),
+    SymptomItem("Fertility concerns",      Icons.Outlined.ChildCare),
+)
+
+@Composable
+private fun SelfSymptomSelectPage(
+    selected: Set<String>,
+    onChange: (Set<String>) -> Unit,
+    onBack: () -> Unit,
+    onContinue: () -> Unit,
+) {
+    OnboardingScaffold(
+        onBack    = onBack,
+        progress  = 0.25f,
+        bottomBar = {
+            Column(modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (selected.isNotEmpty()) {
+                    Text("${selected.size} selected", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.align(Alignment.CenterHorizontally))
+                }
+                SaathiPrimaryButton(
+                    text    = if (selected.isEmpty()) "Skip for now" else "Continue",
+                    onClick = onContinue,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        }
+    ) {
+        Spacer(Modifier.height(20.dp))
+        Text("What changes have\nyou noticed?",
+            style = MaterialTheme.typography.headlineMedium,
+            fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onBackground)
+        Text("Select everything that applies. This helps Saathi and your doctor understand your pattern.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 8.dp))
+        Spacer(Modifier.height(24.dp))
+        SYMPTOMS.forEach { symptom ->
+            val isSelected = symptom.label in selected
+            Surface(
+                onClick  = {
+                    onChange(if (isSelected) selected - symptom.label else selected + symptom.label)
+                },
+                shape    = MaterialTheme.shapes.large,
+                color    = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+            ) {
+                Row(
+                    modifier          = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
+                    Icon(
+                        symptom.icon,
+                        contentDescription = null,
+                        tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp),
+                    )
+                    Text(
+                        symptom.label,
+                        style      = MaterialTheme.typography.bodyMedium,
+                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                        color      = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+                        modifier   = Modifier.weight(1f),
+                    )
+                    if (isSelected) {
+                        Icon(Icons.Outlined.CheckCircle, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ── Period detail ─────────────────────────────────────────────────────────────
+
+@Composable
+private fun SelfPeriodDetailPage(
+    cycleStartDate: Long?,
+    onDate: (Long?) -> Unit,
+    cycleLength: Int,
+    onCycleLength: (Int) -> Unit,
+    regularity: String,
+    onRegularity: (String) -> Unit,
+    heaviness: String,
+    onHeaviness: (String) -> Unit,
+    onBack: () -> Unit,
+    onContinue: () -> Unit,
+) {
+    OnboardingScaffold(
+        onBack    = onBack,
+        progress  = 0.4f,
+        bottomBar = {
+            SaathiPrimaryButton("Continue", onContinue, modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 16.dp))
+        }
+    ) {
+        Spacer(Modifier.height(20.dp))
+        Text("Tell us about your periods", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onBackground)
+        Spacer(Modifier.height(8.dp))
+        Text("A few quick questions so Saathi can track your cycle accurately.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(24.dp))
+
+        SaathiSubheading("How would you describe your cycle?")
+        Spacer(Modifier.height(10.dp))
+        MultiSelectChips(
+            options = listOf("Irregular", "Sometimes regular", "Regular", "Very long cycles", "Missed periods"),
+            selected = setOf(regularity),
+            onToggle = { onRegularity(it) },
+            singleSelect = true,
+        )
+
+        Spacer(Modifier.height(20.dp))
+        SaathiSubheading("Flow heaviness")
+        Spacer(Modifier.height(10.dp))
+        MultiSelectChips(
+            options = listOf("Light", "Medium", "Heavy", "Very heavy", "Varies"),
+            selected = setOf(heaviness),
+            onToggle = { onHeaviness(it) },
+            singleSelect = true,
+        )
+
+        Spacer(Modifier.height(20.dp))
+        SaathiSubheading("When did your last period start?")
+        Spacer(Modifier.height(10.dp))
+        val daysAgoOptions = listOf(0, 1, 3, 7, 14, 21, 28)
+        var notSure by remember { mutableStateOf(cycleStartDate == null) }
+        if (!notSure) {
+            var selectedDays by remember { mutableIntStateOf(7) }
+            LaunchedEffect(selectedDays) { onDate(System.currentTimeMillis() - selectedDays * 86_400_000L) }
+            androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)) {
+                items(daysAgoOptions) { d ->
+                    SaathiChip(text = if (d == 0) "Today" else "$d days ago", selected = selectedDays == d, onClick = { selectedDays = d })
+                }
+            }
+        }
+        Row(modifier = Modifier.fillMaxWidth().padding(top = 10.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text("Not sure", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
+            Switch(checked = notSure, onCheckedChange = { notSure = it; if (it) onDate(null) })
+        }
+
+        Spacer(Modifier.height(20.dp))
+        SaathiSubheading("Usual cycle length")
+        Spacer(Modifier.height(10.dp))
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text("$cycleLength days", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilledTonalIconButton(onClick = { if (cycleLength > 21) onCycleLength(cycleLength - 1) }) { Icon(Icons.Outlined.Remove, contentDescription = null) }
+                FilledTonalIconButton(onClick = { if (cycleLength < 60) onCycleLength(cycleLength + 1) }) { Icon(Icons.Outlined.Add, contentDescription = null) }
+            }
+        }
+    }
+}
+
+// ── Skin detail ───────────────────────────────────────────────────────────────
+
+@Composable
+private fun SelfSkinDetailPage(
+    acneSeverity: String,
+    onSeverity: (String) -> Unit,
+    acneLocations: Set<String>,
+    onLocations: (Set<String>) -> Unit,
+    darkeningAreas: Set<String>,
+    onDarkening: (Set<String>) -> Unit,
+    onBack: () -> Unit,
+    onContinue: () -> Unit,
+) {
+    OnboardingScaffold(
+        onBack    = onBack,
+        progress  = 0.48f,
+        bottomBar = {
+            SaathiPrimaryButton("Continue", onContinue, modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 16.dp))
+        }
+    ) {
+        Spacer(Modifier.height(20.dp))
+        Text("Skin & acne", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onBackground)
+        Spacer(Modifier.height(24.dp))
+
+        SaathiSubheading("Acne severity")
+        Spacer(Modifier.height(10.dp))
+        MultiSelectChips(
+            options = listOf("Occasional", "Mild", "Moderate", "Severe"),
+            selected = setOf(acneSeverity),
+            onToggle = { onSeverity(it) },
+            singleSelect = true,
+        )
+
+        Spacer(Modifier.height(20.dp))
+        SaathiSubheading("Where do you get acne?")
+        Spacer(Modifier.height(10.dp))
+        MultiSelectChips(
+            options = listOf("Face", "Jaw / chin", "Back", "Chest", "Shoulders"),
+            selected = acneLocations,
+            onToggle = { loc -> onLocations(if (loc in acneLocations) acneLocations - loc else acneLocations + loc) },
+            singleSelect = false,
+        )
+
+        Spacer(Modifier.height(20.dp))
+        SaathiSubheading("Skin darkening (neck, armpits, inner thighs)?")
+        Spacer(Modifier.height(10.dp))
+        MultiSelectChips(
+            options = listOf("None", "Neck", "Armpits", "Inner thighs", "Groin"),
+            selected = darkeningAreas.ifEmpty { setOf("None") },
+            onToggle = { area ->
+                if (area == "None") onDarkening(emptySet())
+                else onDarkening((darkeningAreas - "None" + area).let { if (area in darkeningAreas) darkeningAreas - area else it })
+            },
+            singleSelect = false,
+        )
+    }
+}
+
+// ── Hair detail ───────────────────────────────────────────────────────────────
+
+@Composable
+private fun SelfHairDetailPage(
+    hairChangeTypes: Set<String>,
+    onTypes: (Set<String>) -> Unit,
+    hairChangeDuration: String,
+    onDuration: (String) -> Unit,
+    onBack: () -> Unit,
+    onContinue: () -> Unit,
+) {
+    OnboardingScaffold(
+        onBack    = onBack,
+        progress  = 0.55f,
+        bottomBar = {
+            SaathiPrimaryButton("Continue", onContinue, modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 16.dp))
+        }
+    ) {
+        Spacer(Modifier.height(20.dp))
+        Text("Hair changes", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onBackground)
+        Spacer(Modifier.height(24.dp))
+
+        SaathiSubheading("What type of hair change?")
+        Spacer(Modifier.height(10.dp))
+        MultiSelectChips(
+            options = listOf("Thinning / loss", "Hair loss on crown", "Receding hairline", "Diffuse shedding", "Excess facial hair", "Excess body hair"),
+            selected = hairChangeTypes,
+            onToggle = { t -> onTypes(if (t in hairChangeTypes) hairChangeTypes - t else hairChangeTypes + t) },
+            singleSelect = false,
+        )
+
+        Spacer(Modifier.height(20.dp))
+        SaathiSubheading("How long has this been happening?")
+        Spacer(Modifier.height(10.dp))
+        MultiSelectChips(
+            options = listOf("<3 months", "3–6 months", "6–12 months", ">1 year"),
+            selected = setOf(hairChangeDuration),
+            onToggle = { onDuration(it) },
+            singleSelect = true,
+        )
+    }
+}
+
+// ── Weight detail ─────────────────────────────────────────────────────────────
+
+@Composable
+private fun SelfWeightDetailPage(
+    direction: String,
+    onDir: (String) -> Unit,
+    amount: String,
+    onAmount: (String) -> Unit,
+    onBack: () -> Unit,
+    onContinue: () -> Unit,
+) {
+    OnboardingScaffold(
+        onBack    = onBack,
+        progress  = 0.62f,
+        bottomBar = {
+            SaathiPrimaryButton("Continue", onContinue, modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 16.dp))
+        }
+    ) {
+        Spacer(Modifier.height(20.dp))
+        Text("Weight changes", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onBackground)
+        Spacer(Modifier.height(24.dp))
+
+        SaathiSubheading("What's been happening?")
+        Spacer(Modifier.height(10.dp))
+        MultiSelectChips(
+            options = listOf("Gained weight", "Can't lose weight", "Weight fluctuating", "Lost weight unintentionally", "Bloating"),
+            selected = setOf(direction).filter { it.isNotBlank() }.toSet(),
+            onToggle = { onDir(it) },
+            singleSelect = true,
+        )
+
+        Spacer(Modifier.height(20.dp))
+        SaathiSubheading("Roughly how much?")
+        Spacer(Modifier.height(10.dp))
+        MultiSelectChips(
+            options = listOf("<5 kg", "5–10 kg", "10–20 kg", ">20 kg", "Not sure"),
+            selected = setOf(amount).filter { it.isNotBlank() }.toSet(),
+            onToggle = { onAmount(it) },
+            singleSelect = true,
+        )
+    }
+}
+
+// ── Energy / mood detail ──────────────────────────────────────────────────────
+
+@Composable
+private fun SelfEnergyDetailPage(
+    fatigueLevel: Int,
+    onFatigue: (Int) -> Unit,
+    sleepQuality: String,
+    onSleep: (String) -> Unit,
+    moodChanges: Set<String>,
+    onMood: (Set<String>) -> Unit,
+    onBack: () -> Unit,
+    onContinue: () -> Unit,
+) {
+    val fatigueLevelLabels = listOf("Fine", "Bit tired", "Often tired", "Very tired", "Exhausted")
+    OnboardingScaffold(
+        onBack    = onBack,
+        progress  = 0.7f,
+        bottomBar = {
+            SaathiPrimaryButton("Continue", onContinue, modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 16.dp))
+        }
+    ) {
+        Spacer(Modifier.height(20.dp))
+        Text("Energy & mood", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onBackground)
+        Spacer(Modifier.height(24.dp))
+
+        SaathiSubheading("How's your energy day-to-day?")
+        Spacer(Modifier.height(10.dp))
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            (1..5).forEach { level ->
+                val selected = fatigueLevel == level
+                Surface(
+                    onClick  = { onFatigue(level) },
+                    shape    = MaterialTheme.shapes.medium,
+                    color    = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Column(modifier = Modifier.padding(vertical = 10.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text("$level", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold,
+                            color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
+                        Text(fatigueLevelLabels[level - 1], style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(20.dp))
+        SaathiSubheading("Sleep quality")
+        Spacer(Modifier.height(10.dp))
+        MultiSelectChips(
+            options = listOf("Good", "Fair", "Poor", "Trouble falling asleep", "Wake up tired"),
+            selected = setOf(sleepQuality),
+            onToggle = { onSleep(it) },
+            singleSelect = true,
+        )
+
+        Spacer(Modifier.height(20.dp))
+        SaathiSubheading("Mood & mental health")
+        Spacer(Modifier.height(10.dp))
+        MultiSelectChips(
+            options = listOf("Anxiety", "Low mood", "Irritability", "Brain fog", "Sweet cravings", "Difficulty concentrating", "PMS symptoms"),
+            selected = moodChanges,
+            onToggle = { m -> onMood(if (m in moodChanges) moodChanges - m else moodChanges + m) },
+            singleSelect = false,
+        )
+    }
+}
+
+// ── Medical history ───────────────────────────────────────────────────────────
+
+@Composable
+private fun SelfMedHistoryPage(
+    conditions: Set<String>,
+    onConditions: (Set<String>) -> Unit,
+    familyHx: Set<String>,
+    onFamilyHx: (Set<String>) -> Unit,
+    medications: String,
+    onMedications: (String) -> Unit,
+    onBack: () -> Unit,
+    onContinue: () -> Unit,
+) {
+    OnboardingScaffold(
+        onBack    = onBack,
+        progress  = 0.88f,
+        bottomBar = {
+            SaathiPrimaryButton("Continue", onContinue, modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 16.dp))
+        }
+    ) {
+        Spacer(Modifier.height(20.dp))
+        Text("Medical history", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onBackground)
+        Text("Optional — helps Saathi and your doctor see the full picture.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp))
+        Spacer(Modifier.height(24.dp))
+
+        SaathiSubheading("Known conditions")
+        Spacer(Modifier.height(10.dp))
+        MultiSelectChips(
+            options = listOf("None", "PCOS", "Thyroid disorder", "Diabetes / pre-diabetes", "Anaemia", "Endometriosis", "Other"),
+            selected = conditions.ifEmpty { setOf("None") },
+            onToggle = { c ->
+                if (c == "None") onConditions(setOf("None"))
+                else onConditions((conditions - "None" + c).let { if (c in conditions) conditions - c else it }.ifEmpty { setOf("None") })
+            },
+            singleSelect = false,
+        )
+
+        Spacer(Modifier.height(20.dp))
+        SaathiSubheading("Family history")
+        Spacer(Modifier.height(10.dp))
+        MultiSelectChips(
+            options = listOf("None / not sure", "PCOS", "Diabetes", "Thyroid disorder", "Infertility"),
+            selected = familyHx.ifEmpty { setOf("None / not sure") },
+            onToggle = { f ->
+                if (f == "None / not sure") onFamilyHx(setOf("None / not sure"))
+                else onFamilyHx((familyHx - "None / not sure" + f).let { if (f in familyHx) familyHx - f else it }.ifEmpty { setOf("None / not sure") })
+            },
+            singleSelect = false,
+        )
+
+        Spacer(Modifier.height(20.dp))
+        SaathiSubheading("Current medications (optional)")
+        Spacer(Modifier.height(10.dp))
+        OutlinedTextField(
+            value         = medications,
+            onValueChange = onMedications,
+            placeholder   = { Text("e.g. Metformin, OCP, Inositol…") },
+            modifier      = Modifier.fillMaxWidth(),
+            shape         = MaterialTheme.shapes.medium,
+            minLines      = 2,
+            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+            colors        = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor   = MaterialTheme.colorScheme.primary,
+                unfocusedBorderColor = MaterialTheme.colorScheme.outline,
+            ),
+        )
+    }
+}
+
+// ── Shared chip helper ─────────────────────────────────────────────────────────
+
+@Composable
+private fun MultiSelectChips(
+    options: List<String>,
+    selected: Set<String>,
+    onToggle: (String) -> Unit,
+    singleSelect: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    androidx.compose.foundation.layout.FlowRow(
+        modifier          = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement   = Arrangement.spacedBy(8.dp),
+    ) {
+        options.forEach { opt ->
+            val isSelected = opt in selected
+            FilterChip(
+                selected = isSelected,
+                onClick  = { onToggle(opt) },
+                label    = { Text(opt, style = MaterialTheme.typography.labelMedium) },
+            )
+        }
+    }
+}
+
+// ── Goals (legacy — kept for reference) ──────────────────────────────────────
 
 private val GOALS = listOf(
     "Understanding my cycle",
@@ -580,10 +1207,10 @@ private fun SelfDonePage(name: String, onStart: () -> Unit) {
         )
         Spacer(Modifier.height(12.dp))
         Text(
-            "We'll help you understand your patterns — without judgment.",
-            style    = MaterialTheme.typography.bodyLarge,
+            "Saathi will track your 5 key signals — period, skin, hair, weight, and energy — so you always walk into a doctor's appointment with 60 days of real data.",
+            style     = MaterialTheme.typography.bodyLarge,
             textAlign = TextAlign.Center,
-            color    = MaterialTheme.colorScheme.onSurfaceVariant,
+            color     = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(56.dp))
         SaathiPrimaryButton(
@@ -674,7 +1301,10 @@ private fun CompanionPairingPage(
                         // In production this would validate against the scanned QR or be paired via Nearby.
                         // For now we accept any 6-char token + store deviceId = "primary"
                         if (codeInput.length >= 6) {
-                            onPaired("primary_device", codeInput.uppercase())
+                            // Store the token as the pairedDeviceId — both sides will scope
+                            // the Nearby service ID to this token so they find each other
+                            val upperToken = codeInput.uppercase()
+                            onPaired(upperToken, upperToken)
                         } else {
                             error = "Please enter the 6-character code from your partner's app."
                         }
@@ -771,6 +1401,48 @@ private fun CompanionDonePage(onStart: () -> Unit) {
         Spacer(Modifier.height(56.dp))
         SaathiPrimaryButton(
             text     = "Open Saathi",
+            onClick  = onStart,
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+}
+
+// ── Gynac done ────────────────────────────────────────────────────────────────
+
+@Composable
+private fun GynacDonePage(name: String, onStart: () -> Unit) {
+    val displayName = if (name.startsWith("Dr.", ignoreCase = true)) name else "Dr. $name"
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .padding(horizontal = 32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Image(
+            painter = painterResource(R.drawable.saathi_logo),
+            contentDescription = null,
+            modifier = Modifier.size(80.dp),
+        )
+        Spacer(Modifier.height(28.dp))
+        Text(
+            "Welcome, $displayName",
+            style      = MaterialTheme.typography.headlineMedium,
+            fontWeight = FontWeight.SemiBold,
+            textAlign  = TextAlign.Center,
+            color      = MaterialTheme.colorScheme.onBackground,
+        )
+        Spacer(Modifier.height(12.dp))
+        Text(
+            "Your clinical workspace is ready. Monitor your patients, review trends, and stay on top of follow-ups.",
+            style     = MaterialTheme.typography.bodyLarge,
+            textAlign = TextAlign.Center,
+            color     = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(56.dp))
+        SaathiPrimaryButton(
+            text     = "Open Clinic",
             onClick  = onStart,
             modifier = Modifier.fillMaxWidth(),
         )

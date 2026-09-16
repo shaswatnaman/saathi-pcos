@@ -2,8 +2,11 @@ package com.leadmilers.saathi.ui.screen
 
 import androidx.compose.animation.*
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
@@ -11,6 +14,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -23,8 +28,15 @@ import com.leadmilers.saathi.ui.components.*
 import com.leadmilers.saathi.ui.theme.*
 import kotlinx.coroutines.launch
 
-private enum class TrackCategory(val label: String) {
-    CYCLE("Cycle"), BODY("Body"), ENERGY("Energy"), MIND("Mind"), MORE("More")
+private enum class TrackCategory(
+    val label: String,
+    val subtitle: String,
+    val icon: ImageVector,
+) {
+    CYCLE("Cycle",  "Period & flow",       Icons.Outlined.WaterDrop),
+    BODY("Body",    "Skin, weight, hair",  Icons.Outlined.FitnessCenter),
+    ENERGY("Energy","Fatigue levels",      Icons.Outlined.BatteryChargingFull),
+    MIND("Mind",    "Mood & feelings",     Icons.Outlined.SelfImprovement),
 }
 
 @Composable
@@ -61,7 +73,7 @@ fun TrackScreen(
         snackbarHost = { SnackbarHost(snack) },
         bottomBar = {
             AnimatedVisibility(
-                visible = selected != null && selected != TrackCategory.MORE,
+                visible = selected != null,
                 enter   = slideInVertically { it },
                 exit    = slideOutVertically { it },
             ) {
@@ -151,23 +163,57 @@ fun TrackScreen(
 
             Spacer(Modifier.height(28.dp))
 
-            // Category chips
-            Row(
-                modifier = Modifier
-                    .padding(horizontal = 24.dp)
-                    .fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            // 2x2 category grid
+            Column(
+                modifier = Modifier.padding(horizontal = 20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                TrackCategory.entries.forEach { cat ->
-                    SaathiChip(
-                        text     = cat.label,
-                        selected = selected == cat,
-                        onClick  = {
-                            selected = if (selected == cat) null else cat
-                            if (cat == TrackCategory.MORE) onDetailedLogClick()
-                        },
+                val cats = TrackCategory.entries
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    TrackCategoryCard(
+                        category = cats[0],
+                        selected = selected == cats[0],
+                        onClick  = { selected = if (selected == cats[0]) null else cats[0] },
+                        modifier = Modifier.weight(1f),
+                    )
+                    TrackCategoryCard(
+                        category = cats[1],
+                        selected = selected == cats[1],
+                        onClick  = { selected = if (selected == cats[1]) null else cats[1] },
+                        modifier = Modifier.weight(1f),
                     )
                 }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    TrackCategoryCard(
+                        category = cats[2],
+                        selected = selected == cats[2],
+                        onClick  = { selected = if (selected == cats[2]) null else cats[2] },
+                        modifier = Modifier.weight(1f),
+                    )
+                    TrackCategoryCard(
+                        category = cats[3],
+                        selected = selected == cats[3],
+                        onClick  = { selected = if (selected == cats[3]) null else cats[3] },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+            }
+
+            // More link
+            TextButton(
+                onClick  = onDetailedLogClick,
+                modifier = Modifier.padding(horizontal = 20.dp),
+            ) {
+                Icon(Icons.Outlined.AddCircleOutline, contentDescription = null,
+                    modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Detailed log", style = MaterialTheme.typography.labelLarge)
             }
 
             Spacer(Modifier.height(28.dp))
@@ -349,6 +395,61 @@ private fun MindSection(
             }
         }
         SaathiDivider()
+    }
+}
+
+@Composable
+private fun TrackCategoryCard(
+    category: TrackCategory,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val shape = RoundedCornerShape(20.dp)
+    val containerColor = if (selected)
+        MaterialTheme.colorScheme.primary
+    else
+        MaterialTheme.colorScheme.surfaceVariant
+    val contentColor = if (selected)
+        MaterialTheme.colorScheme.onPrimary
+    else
+        MaterialTheme.colorScheme.onSurfaceVariant
+
+    Box(
+        modifier = modifier
+            .clip(shape)
+            .background(containerColor)
+            .then(
+                if (!selected) Modifier.border(
+                    width = 1.dp,
+                    color = MaterialTheme.colorScheme.outlineVariant,
+                    shape = shape,
+                ) else Modifier
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 20.dp, vertical = 22.dp),
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Icon(
+                imageVector       = category.icon,
+                contentDescription = null,
+                tint              = contentColor,
+                modifier          = Modifier.size(28.dp),
+            )
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    text  = category.label,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = contentColor,
+                )
+                Text(
+                    text  = category.subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = contentColor.copy(alpha = if (selected) 0.85f else 0.7f),
+                )
+            }
+        }
     }
 }
 

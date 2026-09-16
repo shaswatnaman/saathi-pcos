@@ -1,12 +1,21 @@
 package com.leadmilers.saathi.ml
 
+import android.content.Context
 import android.graphics.Bitmap
 
-class AcneClassifier {
+class AcneClassifier(context: Context) {
 
-    private val cloudAnalyzer = CloudFaceAnalyzer()
+    val analyzer = OnDeviceFaceAnalyzer(context)
 
-    suspend fun analyze(bitmap: Bitmap): AcneResult = cloudAnalyzer.analyze(bitmap)
+    val isModelReady: Boolean get() = analyzer.isModelReady
 
-    fun close() = Unit
+    suspend fun downloadModelIfNeeded(
+        onProgress: (downloaded: Long, total: Long) -> Unit = { _, _ -> }
+    ) = analyzer.downloadModelIfNeeded(onProgress)
+
+    suspend fun ensureLoaded() = analyzer.ensureLoaded()
+
+    suspend fun analyze(bitmap: Bitmap): AcneResult = analyzer.analyze(bitmap)
+
+    fun close() = analyzer.release()
 }

@@ -1,5 +1,6 @@
 package com.leadmilers.saathi.ml
 
+import android.annotation.SuppressLint
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
@@ -36,6 +37,7 @@ class VoiceAnalyzer {
     private var audioRecord: AudioRecord? = null
 
     // Runs on IO dispatcher; calls onAmplitude(0-1) on Main for live waveform.
+    @SuppressLint("MissingPermission")
     suspend fun record(onAmplitude: suspend (Float) -> Unit): VoiceResult =
         withContext(Dispatchers.IO) {
 

@@ -478,22 +478,12 @@ object ReportGenerator {
 
     // ── Save to Downloads ─────────────────────────────────────────────────
     private fun saveDocument(context: Context, doc: PdfDocument, fileName: String): String {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val values = ContentValues().apply {
-                put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
-                put(MediaStore.MediaColumns.MIME_TYPE, "application/pdf")
-                put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
-            }
-            val uri = context.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)!!
-            context.contentResolver.openOutputStream(uri)!!.use { doc.writeTo(it) }
-            uri.toString()
-        } else {
-            val file = File(
-                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
-                fileName
-            )
-            FileOutputStream(file).use { doc.writeTo(it) }
-            file.absolutePath
-        }
+        // Write to app-private external storage — no WRITE_EXTERNAL_STORAGE permission needed,
+        // works on all API levels, and FileProvider can share it safely.
+        val dir = context.getExternalFilesDir(null) ?: context.filesDir
+        dir.mkdirs()
+        val file = File(dir, fileName)
+        FileOutputStream(file).use { doc.writeTo(it) }
+        return file.absolutePath
     }
 }

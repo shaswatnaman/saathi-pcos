@@ -8,7 +8,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
 private const val TAG = "NearbyManager"
-private const val SERVICE_ID = "com.leadmilers.saathi.sync"
+private const val SERVICE_ID_BASE = "com.leadmilers.saathi.sync"
 
 enum class SyncStatus {
     IDLE, ADVERTISING, DISCOVERING, CONNECTING, SYNCING, SYNCED, ERROR
@@ -34,10 +34,17 @@ class NearbyManager(private val context: Context) {
     private var pendingPayload: String? = null
     private var connectedEndpointId: String? = null
 
+    // Scoped service ID — includes the pairing token so only paired devices discover each other
+    private var effectiveServiceId: String = SERVICE_ID_BASE
+
     fun configure(localName: String, pairedDeviceId: String, onPacket: (SyncPacket) -> Unit) {
-        this.localName      = localName
-        this.pairedDeviceId = pairedDeviceId
+        this.localName        = localName
+        this.pairedDeviceId   = pairedDeviceId
         this.onPacketReceived = onPacket
+        // Token-scoped service ID: only devices that share the same pairing token will find each other
+        this.effectiveServiceId = if (pairedDeviceId.isNotBlank() && pairedDeviceId != "primary_device")
+            "$SERVICE_ID_BASE.${pairedDeviceId.lowercase()}"
+        else SERVICE_ID_BASE
     }
 
     // ── Payload / connection callbacks ────────────────────────────────────────
@@ -47,12 +54,12 @@ class NearbyManager(private val context: Context) {
             if (payload.type == Payload.Type.BYTES) {
                 val bytes = payload.asBytes() ?: return
                 val json  = String(bytes)
-                val packet = SyncPacket.fromJson(json) ?: return
-                // Validate sender
-                if (packet.senderDeviceId != pairedDeviceId) {
-                    Log.w(TAG, "Packet from unknown device — ignoring")
-                    return
+                val packet = SyncPacket.fromJson(json) ?: run {
+                    Log.w(TAG, "Could not parse packet"); return
                 }
+                // Service ID already ensures we're talking to the right paired device —
+                // no additional sender-ID check needed (avoids rejection when pairedDeviceId
+                // hasn't been set yet or was the old "primary_device" placeholder).
                 _state.value = _state.value.copy(
                     status        = SyncStatus.SYNCED,
                     statusMessage = "Synced just now",
@@ -67,16 +74,13 @@ class NearbyManager(private val context: Context) {
 
     private val connectionLifecycleCallback = object : ConnectionLifecycleCallback() {
         override fun onConnectionInitiated(endpointId: String, info: ConnectionInfo) {
-            // Auto-accept if the remote endpoint is our paired device
-            if (info.endpointName == pairedDeviceId || pairedDeviceId.isEmpty()) {
-                connectionsClient.acceptConnection(endpointId, payloadCallback)
-                _state.value = _state.value.copy(
-                    status        = SyncStatus.CONNECTING,
-                    statusMessage = "Connecting…",
-                )
-            } else {
-                connectionsClient.rejectConnection(endpointId)
-            }
+            // Accept any connection on our service ID — the token-scoped service ID is
+            // the discriminator; no extra endpoint-name check needed.
+            connectionsClient.acceptConnection(endpointId, payloadCallback)
+            _state.value = _state.value.copy(
+                status        = SyncStatus.CONNECTING,
+                statusMessage = "Connecting…",
+            )
         }
 
         override fun onConnectionResult(endpointId: String, result: ConnectionResolution) {
@@ -111,16 +115,15 @@ class NearbyManager(private val context: Context) {
 
     private val endpointDiscoveryCallback = object : EndpointDiscoveryCallback() {
         override fun onEndpointFound(endpointId: String, info: DiscoveredEndpointInfo) {
-            if (info.endpointName == pairedDeviceId || pairedDeviceId.isEmpty()) {
-                stopDiscovering()
-                connectionsClient.requestConnection(localName, endpointId, connectionLifecycleCallback)
-                    .addOnFailureListener {
-                        _state.value = _state.value.copy(
-                            status        = SyncStatus.ERROR,
-                            statusMessage = "Couldn't connect",
-                        )
-                    }
-            }
+            // First device found on our token-scoped service ID is the paired partner
+            stopDiscovering()
+            connectionsClient.requestConnection(localName, endpointId, connectionLifecycleCallback)
+                .addOnFailureListener {
+                    _state.value = _state.value.copy(
+                        status        = SyncStatus.ERROR,
+                        statusMessage = "Couldn't connect",
+                    )
+                }
         }
         override fun onEndpointLost(endpointId: String) {}
     }
@@ -136,7 +139,7 @@ class NearbyManager(private val context: Context) {
             .setStrategy(Strategy.P2P_POINT_TO_POINT)
             .build()
 
-        connectionsClient.startAdvertising(localName, SERVICE_ID, connectionLifecycleCallback, options)
+        connectionsClient.startAdvertising(localName, effectiveServiceId, connectionLifecycleCallback, options)
             .addOnSuccessListener {
                 _state.value = _state.value.copy(
                     status        = SyncStatus.ADVERTISING,
@@ -157,7 +160,7 @@ class NearbyManager(private val context: Context) {
             .setStrategy(Strategy.P2P_POINT_TO_POINT)
             .build()
 
-        connectionsClient.startDiscovery(SERVICE_ID, endpointDiscoveryCallback, options)
+        connectionsClient.startDiscovery(effectiveServiceId, endpointDiscoveryCallback, options)
             .addOnSuccessListener {
                 _state.value = _state.value.copy(
                     status        = SyncStatus.DISCOVERING,

@@ -22,7 +22,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.leadmilers.saathi.R
 import com.leadmilers.saathi.SaathiApp
-import com.leadmilers.saathi.companion.NearbyManager
+import com.leadmilers.saathi.companion.LanSyncManager
 import com.leadmilers.saathi.companion.SyncPacket
 import com.leadmilers.saathi.companion.SyncStatus
 import com.leadmilers.saathi.prefs.UserPrefs
@@ -41,7 +41,7 @@ fun CompanionDashboardScreen(
 ) {
     val context  = LocalContext.current
     val prefs    = remember { (context.applicationContext as SaathiApp).userPrefs }
-    val nearby   = remember { (context.applicationContext as SaathiApp).nearbyManager }
+    val nearby   = remember { (context.applicationContext as SaathiApp).lanSyncManager }
     val nearbyState by nearby.state.collectAsState()
     val scope    = rememberCoroutineScope()
 
@@ -62,13 +62,13 @@ fun CompanionDashboardScreen(
         }
     }
 
-    // Auto-start discovery when this screen opens (companion pulls data)
+    // LAN sync — no Bluetooth or special permissions needed
     LaunchedEffect(Unit) {
         if (prefs.isPaired) {
             nearby.configure(
-                localName      = prefs.userName,
-                pairedDeviceId = prefs.pairedDeviceId,
-                onPacket       = { p ->
+                localName   = prefs.userName.ifBlank { "Companion" },
+                pairedToken = prefs.pairingToken.ifBlank { prefs.pairedDeviceId },
+                onPacket    = { p ->
                     CoroutineScope(Dispatchers.Main).launch {
                         prefs.lastSharedSnapshot = p.toJson()
                         packet = p
@@ -77,6 +77,10 @@ fun CompanionDashboardScreen(
             )
             nearby.discover()
         }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose { if (prefs.isPaired) nearby.stopAll() }
     }
 
     Column(
@@ -122,7 +126,20 @@ fun CompanionDashboardScreen(
         SyncStatusRow(
             status    = nearbyState.status,
             lastSync  = prefs.lastSyncAt,
-            onSyncNow = onSyncClick,
+            onSyncNow = {
+                nearby.stopAll()
+                nearby.configure(
+                    localName   = prefs.userName.ifBlank { "Companion" },
+                    pairedToken = prefs.pairingToken.ifBlank { prefs.pairedDeviceId },
+                    onPacket    = { p ->
+                        CoroutineScope(Dispatchers.Main).launch {
+                            prefs.lastSharedSnapshot = p.toJson()
+                            packet = p
+                        }
+                    },
+                )
+                nearby.discover()
+            },
             modifier  = Modifier.padding(horizontal = 24.dp),
         )
 

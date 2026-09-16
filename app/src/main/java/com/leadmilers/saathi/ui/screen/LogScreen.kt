@@ -46,6 +46,7 @@ fun LogScreen() {
     var flowExpanded by remember { mutableStateOf(false) }
 
     // WHtR — computed live from waist / height
+    // Thresholds: ICMR + Snehalatha et al. (2007) Indian women cutoffs
     val whtr = run {
         val w = waistCm.toFloatOrNull()
         val h = heightCm.toFloatOrNull()
@@ -53,10 +54,10 @@ fun LogScreen() {
     }
     val whtrRisk = when {
         whtr == null -> null
-        whtr < 0.43f -> "Low"
-        whtr < 0.53f -> "Healthy"
-        whtr < 0.58f -> "Increased"
-        else -> "High"
+        whtr < 0.46f -> "Low"
+        whtr < 0.49f -> "Healthy"
+        whtr < 0.54f -> "Increased"
+        else         -> "High"
     }
     val whtrColor = when (whtrRisk) {
         "Low"       -> Color(0xFF1976D2)
@@ -116,7 +117,7 @@ fun LogScreen() {
 
             // ── Body measurements section ──────────────────────────────────
             SectionHeader("Body measurements")
-            Text("Optional — used to compute waist-to-height ratio (WHtR), a more sensitive marker of insulin resistance than BMI for PCOS.",
+            Text("Optional — waist-to-height ratio (WHtR) for Indian women. Abdominal fat is a stronger PCOS/insulin-resistance marker in South Asians than BMI (ICMR guidelines: risk waist ≥80 cm).",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
 
@@ -153,13 +154,13 @@ fun LogScreen() {
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically) {
                         Column {
-                            Text("Waist-to-height ratio (WHtR)",
+                            Text("Waist-to-height ratio — Indian women (ICMR)",
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Text("Insulin resistance risk: $whtrRisk",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = whtrColor, fontWeight = FontWeight.SemiBold)
-                            Text("≤0.43 low · 0.43–0.53 healthy · 0.53–0.58 increased · >0.58 high",
+                            Text("<0.46 low · 0.46–0.49 healthy · 0.49–0.54 increased · >0.54 high",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
                         }

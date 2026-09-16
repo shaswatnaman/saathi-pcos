@@ -51,7 +51,10 @@ sealed class AcneResult {
         val hirsutismScore: Float = 0f,
         val acneRegions: List<String> = emptyList(),
         val observations: String = "",
-        val guidance: String = ""
+        val guidance: String = "",
+        /** Extended per-feature scores 0–1. Keys: oiliness, skin_darkening, dark_circles,
+         *  eye_puffiness, skin_uniformity, eyebrow_thinning, symmetry, lip_darkening */
+        val features: Map<String, Float> = emptyMap(),
     ) : AcneResult()
 
     // ── Quality failure enum ─────────────────────────────────────────────────
